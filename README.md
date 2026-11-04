@@ -82,9 +82,9 @@ Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md
 
 ## Releases
 
-Images are built on a Podman host with `scripts/release.sh <version>` (after
-`podman login codeberg.org`) and pushed to `codeberg.org/kintsugiuwu/flalac`. Codeberg CI
-runs lint and tests on every push.
+`scripts/release.sh <version>` checks the checkout, tags it, builds the image with Podman
+(locally, or on `RELEASE_HOST` over ssh) and pushes it to `codeberg.org/kintsugiuwu/flalac`.
+Codeberg CI runs lint and tests on every push.
 
 ## Licence
 
