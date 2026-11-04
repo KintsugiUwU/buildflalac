@@ -1,0 +1,31 @@
+{% if not albums %}
+<p class="empty">
+  {% if s.tracks %}Nothing matches.{% else %}No songs mirrored yet. The first scan starts on its own; this list fills as songs are done.{% endif %}
+</p>
+{% else %}
+<div class="ledger" role="list">
+  <div class="row head" aria-hidden="true">
+    <span>Album</span><span class="count">Songs</span><span>State</span><span>Lyrics</span>
+  </div>
+  {% for album in albums %}
+  <details class="album" role="listitem"{% if album.errors %} open{% endif %}>
+    <summary class="row">
+      <span class="folder">{{ album.folder }}</span>
+      <span class="count num">{{ album.tracks | length }}</span>
+      <span>{% if album.errors %}<span class="state error">{{ album.errors }} with errors</span>{% else %}<span class="state ok">in step</span>{% endif %}</span>
+      <span class="lyrics">{% if album.without_lyrics %}{{ album.without_lyrics }} without{% else %}all{% endif %}</span>
+    </summary>
+    <ul class="tracks">
+      {% for t in album.tracks %}
+      <li class="row">
+        <span class="file">{{ t.rel.rsplit("/", 1)[-1].rsplit(".", 1)[0] }}</span>
+        <span class="count"></span>
+        <span>{% if t.status == "error" %}<span class="state error" title="{{ t.error }}">{{ t.error }}</span>{% endif %}</span>
+        <span class="lyrics">{{ lyrics_label(t.lyrics_source) }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endfor %}
+</div>
+{% endif %}

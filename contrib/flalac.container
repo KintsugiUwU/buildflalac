@@ -1,0 +1,25 @@
+# Rootless Podman quadlet: ~/.config/containers/systemd/flalac/flalac.container
+# Then: systemctl --user daemon-reload && systemctl --user start flalac
+[Unit]
+Description=flalac
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=codeberg.org/kintsugiuwu/flalac:latest
+ContainerName=flalac
+AutoUpdate=registry
+PublishPort=8090:8090
+UserNS=keep-id
+Volume=%h/apps/flalac/config:/config:z
+Volume=/path/to/music/flac:/source:ro,z
+Volume=/path/to/music/alac:/target:z
+Environment=TZ=Europe/Rome
+Environment=TARGET_FORMAT=alac
+Environment=LYRICS=lrclib
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

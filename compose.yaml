@@ -1,0 +1,19 @@
+services:
+  flalac:
+    image: codeberg.org/kintsugiuwu/flalac:latest
+    container_name: flalac
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - /path/to/music/flac:/source:ro   # your library, never written to
+      - /path/to/music/alac:/target      # the mirror flalac keeps in step
+      - ./config:/config                 # state database and lyrics cache
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - TARGET_FORMAT=alac               # alac | flac | aac
+      - LYRICS=lrclib                    # lrclib | sidecar | off
+      # - AUTH_TOKEN=change-me           # protect the web UI and API
+      # - DRY_RUN=true                   # first look: only list what would happen

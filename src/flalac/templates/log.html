@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Log · flalac{% endblock %}
+{% block main %}
+<table class="log">
+  <thead><tr><th>Time</th><th>What</th><th>File</th><th>Detail</th></tr></thead>
+  <tbody>
+    {% for e in events %}
+    <tr class="kind-{{ e.kind }}">
+      <td class="num">{{ e.ts | clock }}</td>
+      <td>{{ e.kind.replace("-", " ") }}</td>
+      <td class="file">{{ e.rel or "" }}</td>
+      <td>{{ e.detail or "" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">Nothing has happened yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

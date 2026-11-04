@@ -1,0 +1,8 @@
+<form id="style" class="style" method="post" action="/lyrics-style" hx-post="/lyrics-style" hx-trigger="change" hx-target="#style" hx-swap="outerHTML">
+  <fieldset>
+    <legend>Lyrics</legend>
+    <label><input type="radio" name="style" value="plain"{% if s.lyrics_style == "plain" %} checked{% endif %}> Plain</label>
+    <label><input type="radio" name="style" value="synced"{% if s.lyrics_style == "synced" %} checked{% endif %}> Synced</label>
+  </fieldset>
+  <noscript><button type="submit">Apply</button></noscript>
+</form>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}flalac{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <a class="name" href="/">flalac</a>
+    {% include "_status.html" %}
+    <nav>
+      <a href="/"{% if request.url.path == "/" %} aria-current="page"{% endif %}>Library</a>
+      <a href="/log"{% if request.url.path == "/log" %} aria-current="page"{% endif %}>Log</a>
+      <form method="post" action="/scan" hx-post="/scan" hx-target="#status" hx-swap="outerHTML">
+        <button type="submit">Scan now</button>
+      </form>
+    </nav>
+  </header>
+  <main>
+    {% block main %}{% endblock %}
+  </main>
+</body>
+</html>

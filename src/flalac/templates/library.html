@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block main %}
+<form class="filters" method="get" action="/" hx-get="/" hx-target="#library" hx-trigger="change, keyup changed delay:300ms from:input[name=q]" hx-push-url="true">
+  <fieldset>
+    <legend class="visually-hidden">Show</legend>
+    {% for value, label in [("all", "All"), ("problems", "Problems"), ("lyrics", "Lyrics missing")] %}
+    <label><input type="radio" name="view" value="{{ value }}"{% if view == value %} checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+  </fieldset>
+  <label class="search">Search <input type="search" name="q" value="{{ q }}" autocomplete="off"></label>
+</form>
+{% include "_style.html" %}
+<div id="library">
+  {% include "_library.html" %}
+</div>
+{% endblock %}

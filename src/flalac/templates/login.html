@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Sign in · flalac</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login">
+  <form method="post" action="/login">
+    <h1>flalac</h1>
+    <label>Access token <input type="password" name="token" autofocus required></label>
+    {% if failed %}<p class="state error">That token doesn't match AUTH_TOKEN.</p>{% endif %}
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<div id="status" class="status" hx-get="/status" hx-trigger="every 3s" hx-swap="outerHTML" role="status">
+  <p>
+    {% if s.phase == "paused" %}
+      <span class="state error">Paused:</span> {{ s.current }}
+    {% elif s.phase == "working" %}
+      <span class="state waiting">Working</span>
+      <span class="num">{{ s.done }} of {{ s.total }}</span>
+      <progress max="{{ s.total or 1 }}" value="{{ s.done }}"></progress>
+      <span class="current">{{ s.current }}</span>
+    {% elif s.phase == "scanning" %}
+      <span class="state waiting">Scanning</span> the source folder
+    {% else %}
+      <span class="num">{{ "{:,}".format(s.synced) }} of {{ "{:,}".format(s.tracks) }}</span> in step
+      {%- if s.errors %} · <a class="state error" href="/?view=problems">{{ s.errors }} with errors</a>{% endif %}
+      · {{ "watching" if s.watching else "rescanning" }} · last scan <span class="num">{{ s.last_pass | clock }}</span>
+    {% endif %}
+    {% if s.dry_run %} · <strong>dry run</strong>: nothing is written{% endif %}
+  </p>
+  {% if s.held_deletes %}
+  <form class="held" method="post" action="/deletes/confirm" hx-post="/deletes/confirm" hx-target="#status" hx-swap="outerHTML">
+    <p><span class="state waiting">{{ s.held_deletes }} files</span> disappeared from the source at once.
+      Their copies are kept until you confirm.</p>
+    <button type="submit">Delete the copies</button>
+  </form>
+  {% endif %}
+</div>
