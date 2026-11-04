@@ -123,6 +123,13 @@ def _artists(*names: str) -> set[str]:
     return found
 
 
+def main_artist(artist: str) -> str:
+    """The first credited artist: 'Flume feat. Kai' -> 'Flume', 'A & B' -> 'A'."""
+    separators = r"\s*(?:,|&|;|/|\bfeat\.?|\bft\.?|\bx\b|×|\bwith\b)\s*"
+    first = re.split(separators, artist or "", maxsplit=1)[0]
+    return first.strip()
+
+
 class LrclibUnavailable(RuntimeError):
     pass
 
@@ -180,6 +187,10 @@ class Answer:
     plain: str = ""
     synced: str = ""
     instrumental: bool = False
+
+    @property
+    def found(self) -> bool:
+        return bool(self.plain or self.synced or self.instrumental)
 
 
 def lookup(results: list[dict], title: str, artist: str, seconds: float) -> Answer:

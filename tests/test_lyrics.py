@@ -150,3 +150,11 @@ def test_retry_requested_when_lrclib_is_down(tmp_path: Path):
     (tmp_path / "03 Song.lrc").write_text("[00:01.00]local\n")
     result = choose(song, tags(), 200, "lrclib", "plain", lambda *_: None)
     assert (result.text, result.source, result.retry) == ("local", "lrc", True)
+
+
+def test_main_artist():
+    from flalac.lyrics import main_artist
+
+    assert main_artist("Flume feat. Anthony for Cleopatra") == "Flume"
+    assert main_artist("Pola & Bryson × Emily Makis") == "Pola"
+    assert main_artist("Flume") == "Flume"

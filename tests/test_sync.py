@@ -389,3 +389,38 @@ def test_synced_style_and_switching_back_to_plain(workspace, make_engine):
     assert MP4(out)["\xa9lyr"] == ["Hello there\nGeneral"]
     assert out.with_suffix(".txt").exists() and not out.with_suffix(".lrc").exists()
     assert engine.run_pass().empty
+
+
+def test_lrclib_is_asked_again_with_the_main_artist(workspace, make_engine):
+    source, target, _ = workspace
+    make_flac(
+        source / "Flume/Sleepless/01 Sleepless.flac",
+        seconds=3.0,
+        tags={"TITLE": "Sleepless", "ARTIST": "Flume feat. Anthony for Cleopatra"},
+    )
+    client = FakeLrclib(
+        {
+            ("Sleepless", "Flume"): [
+                {
+                    "trackName": "Sleepless",
+                    "artistName": "Flume feat. Jezzabell Doran",
+                    "duration": 3,
+                    "plainLyrics": "Sleepless words",
+                },
+                {
+                    "trackName": "Sleepless",
+                    "artistName": "Flume",
+                    "duration": 9,
+                    "plainLyrics": "a different edit",
+                },
+            ]
+        }
+    )
+    engine = make_engine(client)
+    engine.run_pass()
+    assert client.calls == [
+        ("Sleepless", "Flume feat. Anthony for Cleopatra"),
+        ("Sleepless", "Flume"),
+    ]
+    out = target / "Flume/Sleepless/01 Sleepless.m4a"
+    assert MP4(out)["\xa9lyr"] == ["Sleepless words"]

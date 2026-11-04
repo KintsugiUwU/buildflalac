@@ -314,7 +314,13 @@ class Engine:
         if self.clock() < self._lrclib_paused_until:
             return None  # LRCLIB failed recently; don't make every song wait for it
         try:
-            results = self.client.search(title, artist)
+            answer = lyrics.lookup(self.client.search(title, artist), title, artist, seconds)
+            main = lyrics.main_artist(artist)
+            if not answer.found and main and lyrics._norm(main) != lyrics._norm(artist):
+                # LRCLIB's search is picky about full credits ("X feat. Y"); the same
+                # recording is often listed under another credit. lookup() still requires the
+                # same title, a shared artist and a length within 2 seconds.
+                answer = lyrics.lookup(self.client.search(title, main), title, artist, seconds)
         except lyrics.LrclibUnavailable as error:
             self._lrclib_paused_until = self.clock() + LRCLIB_PAUSE_SECONDS
             self.db.event(
@@ -323,7 +329,6 @@ class Engine:
                 f"LRCLIB unavailable ({error}); local lyrics for now, asking again later",
             )
             return None
-        answer = lyrics.lookup(results, title, artist, seconds)
         data = {"plain": answer.plain, "synced": answer.synced, "instrumental": answer.instrumental}
         self.db.cache_lyrics(key, json.dumps(data))
         return answer
