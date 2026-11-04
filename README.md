@@ -16,7 +16,7 @@ each song gets readable plain lyrics.
 - **Safe.** The source is only read. Nothing is deleted when the source looks missing, and a scan
   that would delete more than 5 % of the mirror waits for you to confirm. Files flalac did not
   make are never touched.
-- **iPod-ready by default.** Hi-res files are reduced to 16-bit / 48 kHz with dither (configurable).
+- **iPod-ready by default.** Hi-res files are reduced to 16-bit / 44.1 kHz (CD quality, what iPods play natively) with dither (configurable).
 
 ## Run it
 
@@ -40,7 +40,7 @@ Tip: start once with `DRY_RUN=true`. The log then lists everything flalac *would
 | `TARGET_FORMAT` | `alac` | `alac`, `flac` or `aac` (lossy, for small devices) |
 | `AAC_BITRATE` | `256` | kbit/s when the target is AAC |
 | `MAX_BIT_DEPTH` | `16` | reduce higher bit depths (with dither); `0` keeps the source |
-| `MAX_SAMPLE_RATE` | `48000` | reduce higher sample rates; `0` keeps the source |
+| `MAX_SAMPLE_RATE` | `44100` | resample anything higher to this rate; `0` keeps the source |
 | `LYRICS` | `lrclib` | `lrclib`: LRCLIB, else local files; `sidecar`: only local `.txt`/`.lrc`; `off` |
 | `LYRICS_STYLE` | `plain` | `plain` or `synced` (also switchable in the web UI) |
 | `WORKERS` | half the CPUs (1–4) | songs converted in parallel |

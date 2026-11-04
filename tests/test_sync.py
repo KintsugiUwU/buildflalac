@@ -188,7 +188,7 @@ def test_hi_res_is_reduced_for_ipods(workspace, make_engine):
     engine = make_engine()
     engine.run_pass()
     info = MP4(target / ALBUM / "01 First.m4a").info
-    assert (info.sample_rate, info.bits_per_sample) == (48000, 16)
+    assert (info.sample_rate, info.bits_per_sample) == (44100, 16)
 
 
 def test_hi_res_kept_when_limits_are_off(workspace, make_engine):
@@ -424,3 +424,13 @@ def test_lrclib_is_asked_again_with_the_main_artist(workspace, make_engine):
     ]
     out = target / "Flume/Sleepless/01 Sleepless.m4a"
     assert MP4(out)["\xa9lyr"] == ["Sleepless words"]
+
+
+def test_48k_sources_follow_the_limit(workspace, make_engine):
+    source, target, _ = workspace
+    song(source, rate=48000, bits=16)
+    make_engine().run_pass()
+    assert MP4(target / ALBUM / "01 First.m4a").info.sample_rate == 44100
+    song(source, "02 Second", 2, rate=48000, bits=16)
+    make_engine(max_sample_rate=48000).run_pass()
+    assert MP4(target / ALBUM / "02 Second.m4a").info.sample_rate == 48000

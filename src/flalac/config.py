@@ -49,7 +49,7 @@ class Settings:
     target_format: str = "alac"
     aac_bitrate: int = 256
     max_bit_depth: int = 16  # 0 keeps the source bit depth
-    max_sample_rate: int = 48000  # 0 keeps the source sample rate
+    max_sample_rate: int = 44100  # 0 keeps the source sample rate
     workers: int = 2
     rescan_minutes: int = 30
     settle_seconds: int = 10
@@ -71,7 +71,7 @@ class Settings:
             target_format=_choice(env, "TARGET_FORMAT", "alac", FORMATS),
             aac_bitrate=_int(env, "AAC_BITRATE", 256, 64),
             max_bit_depth=_int(env, "MAX_BIT_DEPTH", 16),
-            max_sample_rate=_int(env, "MAX_SAMPLE_RATE", 48000),
+            max_sample_rate=_int(env, "MAX_SAMPLE_RATE", 44100),
             workers=_int(env, "WORKERS", max(1, min(4, (os.cpu_count() or 2) // 2)), 1),
             rescan_minutes=_int(env, "RESCAN_MINUTES", 30),
             settle_seconds=_int(env, "SETTLE_SECONDS", 10),

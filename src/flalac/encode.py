@@ -24,9 +24,8 @@ class Plan:
 
 
 def _target_rate(rate: int, limit: int) -> int:
-    if not limit or rate <= limit:
-        return rate
-    return 48000 if rate % 48000 == 0 and limit >= 48000 else 44100
+    """Anything above MAX_SAMPLE_RATE is resampled to exactly that rate."""
+    return rate if not limit or rate <= limit else limit
 
 
 def plan(audio: AudioFacts, settings: Settings) -> Plan:
