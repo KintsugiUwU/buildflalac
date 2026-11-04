@@ -80,6 +80,12 @@ SOURCE_DIR=./in TARGET_DIR=./out CONFIG_DIR=./config uv run flalac
 
 Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md).
 
+## Releases
+
+Images are built on a Podman host with `scripts/release.sh <version>` (after
+`podman login codeberg.org`) and pushed to `codeberg.org/kintsugiuwu/flalac`. Codeberg CI
+runs lint and tests on every push.
+
 ## Licence
 
 GPL-3.0-or-later. Bundled: Atkinson Hyperlegible Next (SIL OFL 1.1), htmx (0BSD).

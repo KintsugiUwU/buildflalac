@@ -1,10 +1,8 @@
-# Codeberg (Forgejo Actions). Tests on every push; on a version tag, build the image for
-# amd64 + arm64 and push it to Codeberg's registry. Needs a repository secret
-# REGISTRY_TOKEN (a Codeberg access token with package write access).
+# Codeberg (Forgejo Actions): lint and tests on every push. Codeberg's hosted runners are
+# small and short-lived, so images are built with scripts/release.sh on a Podman host.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -20,25 +18,3 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run pytest -q
-
-  image:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
-    runs-on: codeberg-small
-    container:
-      image: quay.io/buildah/stable:latest
-      options: --privileged
-    steps:
-      - run: dnf install -y git nodejs qemu-user-static
-      - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Build and push
-        env:
-          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-        run: |
-          set -eu
-          image=codeberg.org/kintsugiuwu/flalac
-          version="${GITHUB_REF_NAME#v}"
-          buildah login -u KintsugiUwU -p "$TOKEN" codeberg.org
-          buildah build --format docker --platform linux/amd64,linux/arm64 --manifest flalac -f Containerfile .
-          buildah manifest push --all flalac "docker://$image:$version"
-          buildah manifest push --all flalac "docker://$image:latest"
