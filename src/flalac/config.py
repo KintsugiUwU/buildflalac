@@ -56,6 +56,10 @@ class Settings:
     lyrics: str = "lrclib"
     lyrics_style: str = "plain"
     lyrics_files: bool = True  # a .txt/.lrc next to each target, besides embedding
+    jellyfin_url: str = ""  # play counts with Jellyfin for the Mac script; off when empty
+    jellyfin_api_key: str = ""
+    jellyfin_user: str = ""
+    jellyfin_music_path: str = "/Media/Music/FLAC"  # the source folder as Jellyfin sees it
     delete_guard_percent: int = 5
     auth_token: str = ""
     dry_run: bool = False
@@ -83,6 +87,10 @@ class Settings:
             dry_run=_flag(env, "DRY_RUN"),
             lyrics_files=env.get("LYRICS_FILES", "on").strip().lower()
             not in ("0", "false", "no", "off"),
+            jellyfin_url=env.get("JELLYFIN_URL", "").strip(),
+            jellyfin_api_key=env.get("JELLYFIN_API_KEY", "").strip(),
+            jellyfin_user=env.get("JELLYFIN_USER", "").strip(),
+            jellyfin_music_path=env.get("JELLYFIN_MUSIC_PATH", "/Media/Music/FLAC").strip(),
             host=env.get("HOST", "0.0.0.0"),
             port=_int(env, "PORT", 8090, 1),
         )

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Mac · flalac{% endblock %}
+{% block main %}
+<section class="prose">
+  <h2>flalac for Mac</h2>
+  <p>A small AppleScript that keeps the Music app (or iTunes) on a Mac in step with this
+  mirror: it adds new songs, removes deleted ones, follows renamed ones without losing their
+  plays, refreshes retagged ones{% if jellyfin %} and syncs play counts with Jellyfin both
+  ways{% endif %}. It works on every Mac from Mac OS X 10.4 to today.</p>
+  <ol>
+    <li>In Music or iTunes, open Settings → Files and turn off
+      <b>Copy files to Music Media folder when adding</b> and
+      <b>Keep Music Media folder organised</b>.</li>
+    <li>Connect the share that holds the mirror (Finder → Go → Connect to Server).</li>
+    <li><a href="/mac/script">Download the script</a>, open it in Script Editor and choose
+      File → Export (or Save As) → File Format: Application.</li>
+    <li>Run the app. The first time it asks where the mirror folder is on this Mac.
+      Run it again whenever you like, or after syncing an iPod.</li>
+  </ol>
+  {% if not jellyfin %}<p>Play counts: set <code>JELLYFIN_URL</code>,
+  <code>JELLYFIN_API_KEY</code> and <code>JELLYFIN_USER</code> to sync them with Jellyfin.</p>{% endif %}
+  {% if macs %}
+  <table class="log">
+    <thead><tr><th>Mac</th><th>Last sync</th><th>Songs paired</th></tr></thead>
+    <tbody>
+    {% for m in macs %}
+      <tr><td>{{ m.name }}</td><td class="num">{{ m.last_sync | clock }}</td><td class="num">{{ m.tracks }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

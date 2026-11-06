@@ -44,6 +44,10 @@ Tip: start once with `DRY_RUN=true`. The log then lists everything flalac *would
 | `LYRICS` | `lrclib` | `lrclib`: LRCLIB only; `sidecar`: only your `.txt`/`.lrc` next to the source; `off` |
 | `LYRICS_STYLE` | `plain` | `plain` or `synced` (also switchable in the web UI) |
 | `LYRICS_FILES` | `on` | `off`: lyrics only embedded, no `.txt`/`.lrc` next to each song (turning it off removes the ones flalac wrote) |
+| `JELLYFIN_URL` | | Jellyfin address for play counts with the Mac script, e.g. `http://nas:8096` |
+| `JELLYFIN_API_KEY` | | An API key (Jellyfin Dashboard → API Keys) |
+| `JELLYFIN_USER` | | The Jellyfin user whose play counts are synced |
+| `JELLYFIN_MUSIC_PATH` | `/Media/Music/FLAC` | The source folder as Jellyfin sees it |
 | `WORKERS` | half the CPUs (1–4) | songs converted in parallel |
 | `RESCAN_MINUTES` | `30` | full rescan interval, on top of watching for changes; `0` turns it off |
 | `SETTLE_SECONDS` | `10` | wait until a file stopped changing (taggers write in steps) |
@@ -87,6 +91,16 @@ SOURCE_DIR=./in TARGET_DIR=./out CONFIG_DIR=./config uv run flalac
 ```
 
 Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md).
+
+## Macs
+
+The **Mac** page has a small AppleScript (iTunes on Mac OS X 10.4 and later, and the Music app)
+that keeps a Mac's library in step with the mirror: it adds new songs, removes deleted ones,
+follows renamed ones without losing their plays, refreshes retagged ones and, with the
+`JELLYFIN_*` settings, syncs play counts with Jellyfin both ways. Save it from Script Editor as
+an application. Every decision is made by flalac (`/api/mac-sync`); play counts keep a memory
+per Mac and song, add new plays from both sides, never pass on decreases and never count a
+play twice. Any number of Macs can use it.
 
 ## Releases
 

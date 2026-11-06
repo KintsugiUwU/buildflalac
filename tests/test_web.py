@@ -42,3 +42,16 @@ def test_lyrics_style_switch(workspace, make_engine):
     assert 'value="synced" checked' in client.get("/").text
     client.post("/lyrics-style", data={"style": "nonsense"})
     assert engine.lyrics_style == "synced"
+
+
+def test_mac_page_script_and_sync(workspace, make_engine):
+    engine = make_engine()
+    client = TestClient(create_app(engine), base_url="http://nas:8090")
+    assert "flalac for Mac" in client.get("/mac").text
+    script = client.get("/mac/script")
+    assert 'property serverURL : "http://nas:8090"' in script.text
+    assert "attachment" in script.headers["content-disposition"]
+    answer = client.post("/api/mac-sync", content="mac\tMacBook\nroot\t/Volumes/x/ALAC\n")
+    assert answer.status_code == 200 and answer.text == "\n"
+    assert client.post("/api/mac-sync", content="track\tP1\t0\t/x").status_code == 400
+    assert "MacBook" in client.get("/mac").text

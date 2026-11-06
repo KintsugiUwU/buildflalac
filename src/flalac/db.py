@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS macs (name TEXT PRIMARY KEY, last_sync REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS mac_tracks (   -- play count memory per Mac library and track
+    mac TEXT NOT NULL,
+    pid TEXT NOT NULL,             -- the track's persistent ID in that library
+    identity TEXT NOT NULL,        -- audio identity of the mirrored song
+    agreed INTEGER NOT NULL,       -- the total both sides agreed on
+    last_music INTEGER NOT NULL,   -- the Mac's count when last synced
+    last_jelly INTEGER NOT NULL,   -- Jellyfin's count when last synced
+    PRIMARY KEY (mac, pid)
+);
 """
 
 
@@ -58,6 +68,14 @@ class Track:
     error: str | None
     updated: float
     lyrics_retry: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MacMemory:
+    identity: str
+    agreed: int
+    last_music: int
+    last_jelly: int
 
 
 # Columns added after the first release, with their SQL definition.
@@ -152,6 +170,45 @@ class Database:
                 self._conn.execute(
                     "UPDATE tracks SET lyrics_retry=1, updated=0 WHERE rel=?", (rel,)
                 )
+
+    # Macs --------------------------------------------------------------
+    def mac_memory(self, mac: str) -> dict[str, MacMemory]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT pid, identity, agreed, last_music, last_jelly FROM mac_tracks WHERE mac=?",
+                (mac,),
+            ).fetchall()
+        return {r["pid"]: MacMemory(r[1], r[2], r[3], r[4]) for r in rows}
+
+    def macs(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT m.name, m.last_sync, count(t.pid) AS tracks FROM macs m"
+                " LEFT JOIN mac_tracks t ON t.mac = m.name GROUP BY m.name ORDER BY m.name"
+            ).fetchall()
+
+    def mac_last_sync(self, mac: str) -> float:
+        with self._lock:
+            row = self._conn.execute("SELECT last_sync FROM macs WHERE name=?", (mac,)).fetchone()
+        return float(row["last_sync"]) if row else 0.0
+
+    def save_mac_sync(self, mac: str, memory: dict[str, MacMemory], when: float) -> None:
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                self._conn.execute("DELETE FROM mac_tracks WHERE mac=?", (mac,))
+                self._conn.executemany(
+                    "INSERT INTO mac_tracks VALUES (?,?,?,?,?,?)",
+                    [
+                        (mac, pid, m.identity, m.agreed, m.last_music, m.last_jelly)
+                        for pid, m in memory.items()
+                    ],
+                )
+                self._conn.execute("INSERT OR REPLACE INTO macs VALUES (?,?)", (mac, when))
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
 
     # events ------------------------------------------------------------
     def event(self, kind: str, rel: str | None = None, detail: str = "") -> None:

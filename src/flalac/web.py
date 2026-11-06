@@ -10,14 +10,23 @@ from pathlib import Path, PurePosixPath
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import __version__
+from .jellyfin import Jellyfin
+from .macsync import MacSync, RequestError, parse_request
 from .runner import Runner
 from .sync import Engine
 
@@ -137,6 +146,28 @@ def create_app(engine: Engine, runner: Runner | None = None) -> Starlette:
     async def log(request: Request) -> HTMLResponse:
         return page("log.html", request, events=engine.db.events(500))
 
+    mac_sync = MacSync(engine.s, engine.db, Jellyfin.from_settings(engine.s))
+    script = Path(__file__).parent / "static" / "flalac-mac.applescript"
+
+    async def mac(request: Request) -> HTMLResponse:
+        macs = engine.db.macs()
+        jellyfin = mac_sync.jellyfin is not None
+        return page("mac.html", request, macs=macs, jellyfin=jellyfin)
+
+    async def mac_script(request: Request) -> Response:
+        server = str(request.base_url).rstrip("/")
+        text = script.read_text(encoding="utf-8").replace("__SERVER__", server)
+        headers = {"Content-Disposition": 'attachment; filename="flalac for Mac.applescript"'}
+        return PlainTextResponse(text, headers=headers)
+
+    async def api_mac_sync(request: Request) -> Response:
+        try:
+            body = (await request.body()).decode("utf-8", errors="replace")
+            actions = await run_in_threadpool(mac_sync.sync, parse_request(body))
+        except RequestError as error:
+            return PlainTextResponse(f"error\t{error}\n", status_code=400)
+        return PlainTextResponse("\n".join(actions) + "\n")
+
     async def scan(request: Request) -> Response:
         if runner:
             runner.trigger()
@@ -189,6 +220,9 @@ def create_app(engine: Engine, runner: Runner | None = None) -> Starlette:
         Route("/", library),
         Route("/status", status),
         Route("/log", log),
+        Route("/mac", mac),
+        Route("/mac/script", mac_script),
+        Route("/api/mac-sync", api_mac_sync, methods=["POST"]),
         Route("/scan", scan, methods=["POST"]),
         Route("/deletes/confirm", confirm_deletes, methods=["POST"]),
         Route("/lyrics-style", lyrics_style, methods=["POST"]),
