@@ -55,6 +55,7 @@ class Settings:
     settle_seconds: int = 10
     lyrics: str = "lrclib"
     lyrics_style: str = "plain"
+    lyrics_files: bool = True  # a .txt/.lrc next to each target, besides embedding
     delete_guard_percent: int = 5
     auth_token: str = ""
     dry_run: bool = False
@@ -80,6 +81,8 @@ class Settings:
             delete_guard_percent=_int(env, "DELETE_GUARD_PERCENT", 5),
             auth_token=env.get("AUTH_TOKEN", "").strip(),
             dry_run=_flag(env, "DRY_RUN"),
+            lyrics_files=env.get("LYRICS_FILES", "on").strip().lower()
+            not in ("0", "false", "no", "off"),
             host=env.get("HOST", "0.0.0.0"),
             port=_int(env, "PORT", 8090, 1),
         )

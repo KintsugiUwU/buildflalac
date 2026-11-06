@@ -479,3 +479,30 @@ def test_new_matching_rules_ask_lrclib_again_once(workspace, make_engine):
     assert again.db.get(f"{ALBUM}/01 First.flac").lyrics_source == "lrclib"
     assert again.db.meta("lrclib_rules") == "2"
     assert again.run_pass().empty  # only once
+
+
+def test_lyrics_files_off_embeds_only_and_removes_written_files(workspace, make_engine):
+    source, target, _ = workspace
+    flac = song(source)
+    flac.with_suffix(".lrc").write_text("[00:00.50]Words\n")
+    engine = make_engine(lyrics="sidecar")
+    engine.run_pass()
+    out = target / ALBUM / "01 First.m4a"
+    assert out.with_suffix(".txt").is_file()
+    second = song(source, "02 Second", 2)
+    second.with_suffix(".lrc").write_text("[00:00.50]Mine\n")
+    engine.run_pass()
+    edited = target / ALBUM / "02 Second.txt"
+    edited.write_text("My own version\n")
+    engine.run_pass()  # the edit is noticed and kept
+
+    quiet = make_engine(lyrics="sidecar", lyrics_files=False)
+    assert not out.with_suffix(".txt").exists()  # flalac's own file is gone
+    assert edited.read_text() == "My own version\n"  # the edited one stays
+    assert quiet.run_pass().empty  # and is not written again
+    assert MP4(out)["\xa9lyr"] == ["Words"]
+    third = song(source, "03 Third", 3)
+    third.with_suffix(".lrc").write_text("[00:00.50]New\n")
+    quiet.run_pass()
+    assert MP4(target / ALBUM / "03 Third.m4a")["\xa9lyr"] == ["New"]
+    assert not (target / ALBUM / "03 Third.txt").exists()

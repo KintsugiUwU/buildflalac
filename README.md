@@ -43,6 +43,7 @@ Tip: start once with `DRY_RUN=true`. The log then lists everything flalac *would
 | `MAX_SAMPLE_RATE` | `44100` | resample anything higher to this rate; `0` keeps the source |
 | `LYRICS` | `lrclib` | `lrclib`: LRCLIB only; `sidecar`: only your `.txt`/`.lrc` next to the source; `off` |
 | `LYRICS_STYLE` | `plain` | `plain` or `synced` (also switchable in the web UI) |
+| `LYRICS_FILES` | `on` | `off`: lyrics only embedded, no `.txt`/`.lrc` next to each song (turning it off removes the ones flalac wrote) |
 | `WORKERS` | half the CPUs (1–4) | songs converted in parallel |
 | `RESCAN_MINUTES` | `30` | full rescan interval, on top of watching for changes; `0` turns it off |
 | `SETTLE_SECONDS` | `10` | wait until a file stopped changing (taggers write in steps) |

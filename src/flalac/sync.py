@@ -75,6 +75,11 @@ class Engine:
         self.db = db
         self.client = client if client is not None else lyrics.LrclibClient()
         self.clock = clock
+        files = "on" if settings.lyrics_files else "off"
+        if db.meta("lyrics_files", "on") != files:
+            if not settings.lyrics_files:
+                self._remove_lyrics_files()
+            db.set_meta("lyrics_files", files)  # switched back on: missing files are rewritten
         if settings.lyrics == "lrclib" and db.meta("lrclib_rules") != LRCLIB_RULES:
             # Matching improved since these songs were looked up; ask LRCLIB again for them
             db.ask_lrclib_again()
@@ -227,6 +232,8 @@ class Engine:
 
     def _lyrics_dirty(self, sf: SourceFile, track: Track) -> bool:
         """Sidecars changed next to the source, or someone edited the target's lyrics file."""
+        if not self.s.lyrics_files:
+            return sf.side_mtime > track.updated
         side = self._sidecar(track.target_rel, track.lyrics_source)
         if side.is_file():
             current = text_hash(side.read_text(encoding="utf-8", errors="replace").strip())
@@ -350,6 +357,8 @@ class Engine:
         """Write the lyrics file next to the target (.txt or .lrc) and drop the other kind."""
         if locked:
             return text_hash(chosen.text.strip())
+        if not self.s.lyrics_files:
+            return text_hash(chosen.text.strip()) if chosen.text else None
         side = self._sidecar(target_rel, chosen.source)
         other = side.with_suffix(".txt" if side.suffix == ".lrc" else ".lrc")
         other.unlink(missing_ok=True)
@@ -361,8 +370,25 @@ class Engine:
         side.unlink(missing_ok=True)
         return None
 
+    def _remove_lyrics_files(self) -> None:
+        """LYRICS_FILES=off: delete the lyrics files flalac wrote next to the targets. Files the
+        user edited (locked) stay, and so do files whose text is not what flalac wrote."""
+        removed = 0
+        for track in self.db.tracks().values():
+            if track.lyrics_locked or not track.target_rel or not track.lyrics_hash:
+                continue
+            side = self._sidecar(track.target_rel, track.lyrics_source)
+            if side.is_file():
+                text = side.read_text(encoding="utf-8", errors="replace").strip()
+                if text_hash(text) == track.lyrics_hash:
+                    side.unlink()
+                    removed += 1
+        self.db.event("lyrics-files-removed", None, f"{removed} lyrics files removed")
+
     def _detect_edit(self, track: Track | None) -> bool:
         """True when the user changed the lyrics file we wrote last time."""
+        if not self.s.lyrics_files:
+            return bool(track and track.lyrics_locked)
         if not track or not track.target_rel or not track.lyrics_hash:
             return bool(track and track.lyrics_locked)
         side = self._sidecar(track.target_rel, track.lyrics_source)
