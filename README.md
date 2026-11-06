@@ -72,7 +72,9 @@ LRCLIB is asked once per song, politely (one request at a time), and the answer 
 entry needs a shared artist and the same title; the best is one within 2 s of the song's length,
 else the same title at another length (an edit or remaster; plain lyrics only), else a title with
 an extra suffix such as "Footloose (Footloose)". If LRCLIB is down, the song is asked again later.
-Songs LRCLIB marks as instrumental are shown as such. Edit a
+Songs LRCLIB marks as instrumental are shown as such. If LRCLIB has words for a version
+that is instrumental in your library, list its source path (as shown in the web UI) in
+`no-lyrics.txt` in the config folder, one per line; flalac removes its lyrics on the next pass. Edit a
 lyrics file next to a converted song and flalac keeps your version.
 
 ## Develop

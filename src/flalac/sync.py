@@ -27,6 +27,7 @@ from .config import Settings
 from .db import Database, Track
 
 SOURCE_SUFFIXES = (".flac", ".m4a")
+NO_LYRICS_FILE = "no-lyrics.txt"
 LRCLIB_RULES = "2"  # bump when lyrics.lookup() finds more, so earlier misses are asked again
 LYRICS_RETRY_SECONDS = 3600  # ask LRCLIB again at most once an hour after it was unreachable
 LRCLIB_PAUSE_SECONDS = 600  # after a failure, skip LRCLIB this long
@@ -249,6 +250,7 @@ class Engine:
             return None
         try:
             self.status.update(phase="scanning", current="")
+            self._apply_no_lyrics_changes()
             try:
                 plan = self.scan()
             except SourceMissingError as error:
@@ -316,12 +318,31 @@ class Engine:
     def _lyrics_for(
         self, sf: SourceFile, tags: media.Tags, seconds: float, track: Track | None
     ) -> lyrics.Lyrics:
+        if sf.rel in self._no_lyrics():
+            return lyrics.Lyrics("", "none")
         if track and track.lyrics_locked and track.target_rel:
             side = self._sidecar(track.target_rel, track.lyrics_source)
             if side.is_file():
                 text = side.read_text(encoding="utf-8", errors="replace").strip()
                 return lyrics.Lyrics(text, "edited-synced" if side.suffix == ".lrc" else "edited")
         return lyrics.choose(sf.path, tags, seconds, self.s.lyrics, self.lyrics_style, self._online)
+
+    def _no_lyrics(self) -> set[str]:
+        """Songs that never get lyrics (an instrumental version LRCLIB has words for), one
+        source path per line in CONFIG_DIR/no-lyrics.txt, as shown in the web UI."""
+        path = self.s.config / NO_LYRICS_FILE
+        if not path.is_file():
+            return set()
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+
+    def _apply_no_lyrics_changes(self) -> None:
+        """Songs added to or removed from no-lyrics.txt get their lyrics chosen again."""
+        now = self._no_lyrics()
+        before = set(filter(None, self.db.meta("no_lyrics").split("\n")))
+        if now != before:
+            self.db.ask_lyrics_again(now ^ before)
+            self.db.set_meta("no_lyrics", "\n".join(sorted(now)))
 
     def _online(self, title: str, artist: str, seconds: float) -> lyrics.Answer | None:
         """LRCLIB's answer, cached; None (and nothing cached) when LRCLIB can't be reached."""

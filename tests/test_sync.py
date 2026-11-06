@@ -506,3 +506,26 @@ def test_lyrics_files_off_embeds_only_and_removes_written_files(workspace, make_
     quiet.run_pass()
     assert MP4(target / ALBUM / "03 Third.m4a")["\xa9lyr"] == ["New"]
     assert not (target / ALBUM / "03 Third.txt").exists()
+
+
+def test_no_lyrics_list(workspace, make_engine):
+    source, target, config = workspace
+    song(source)
+    found = {
+        "trackName": "First",
+        "artistName": "Pola & Bryson",
+        "duration": 30,
+        "plainLyrics": "Words LRCLIB has",
+    }
+    engine = make_engine(FakeLrclib({("First", "Pola & Bryson × Emily Makis"): [found]}))
+    engine.run_pass()
+    out = target / ALBUM / "01 First.m4a"
+    assert MP4(out)["\xa9lyr"] == ["Words LRCLIB has"]
+    (config / "no-lyrics.txt").write_text(f"# instrumental here\n{ALBUM}/01 First.flac\n")
+    engine.run_pass()
+    assert "\xa9lyr" not in MP4(out)
+    assert engine.db.get(f"{ALBUM}/01 First.flac").lyrics_source == "none"
+    assert engine.run_pass().empty
+    (config / "no-lyrics.txt").write_text("")
+    engine.run_pass()
+    assert MP4(out)["\xa9lyr"] == ["Words LRCLIB has"]

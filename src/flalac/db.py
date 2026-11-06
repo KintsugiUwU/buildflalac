@@ -145,6 +145,14 @@ class Database:
                 " AND lyrics_source IN ('lrc', 'txt', 'tag', 'none')"
             ).rowcount
 
+    def ask_lyrics_again(self, rels: set[str]) -> None:
+        """Choose the lyrics of these songs again on the next pass."""
+        with self._lock:
+            for rel in rels:
+                self._conn.execute(
+                    "UPDATE tracks SET lyrics_retry=1, updated=0 WHERE rel=?", (rel,)
+                )
+
     # events ------------------------------------------------------------
     def event(self, kind: str, rel: str | None = None, detail: str = "") -> None:
         with self._lock:
