@@ -131,6 +131,31 @@ def test_missing_source_pauses_and_deletes_nothing(workspace, make_engine):
     assert (target / ALBUM / "01 First.m4a").exists()
 
 
+def test_unreadable_folder_pauses_instead_of_deleting(workspace, make_engine, monkeypatch):
+    source, target, _ = workspace
+    song(source)
+    engine = make_engine()
+    engine.run_pass()
+    real_walk = os.walk
+
+    def failing_walk(top, onerror=None, **kwargs):
+        onerror(PermissionError(13, "Permission denied", str(source / ALBUM)))
+        yield from real_walk(top, onerror=onerror, **kwargs)
+
+    monkeypatch.setattr("flalac.sync.os.walk", failing_walk)
+    assert engine.run_pass() is None
+    assert engine.status["phase"] == "paused"
+    assert (target / ALBUM / "01 First.m4a").exists()
+
+
+def test_target_inside_source_is_refused(workspace, make_engine):
+    source, _, _ = workspace
+    song(source)
+    engine = make_engine(target=source / "ALAC")
+    assert engine.run_pass() is None
+    assert "inside the source" in engine.status["current"]
+
+
 def test_files_still_being_written_wait(workspace, make_engine):
     song(workspace[0])
     engine = make_engine(settle_seconds=3600)

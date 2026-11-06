@@ -130,8 +130,9 @@ def make_engine(workspace) -> Callable[..., Engine]:
     engines: list[Engine] = []
 
     def build(client: FakeLrclib | None = None, **overrides) -> Engine:
-        options = {"settle_seconds": 0, "workers": 2, **overrides}
-        settings = Settings(source=source, target=target, config=config, **options)
+        options = {"source": source, "target": target, "config": config}
+        options |= {"settle_seconds": 0, "workers": 2, **overrides}
+        settings = Settings(**options)
         engine = Engine(settings, Database(config / "flalac.db"), client or FakeLrclib())
         engines.append(engine)
         return engine

@@ -1,6 +1,6 @@
 services:
   flalac:
-    image: codeberg.org/kintsugiuwu/flalac:latest
+    image: codeberg.org/kintsugiuwu/flalac:0.2.0
     container_name: flalac
     restart: unless-stopped
     ports:

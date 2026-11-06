@@ -6,9 +6,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
-Image=codeberg.org/kintsugiuwu/flalac:latest
+Image=codeberg.org/kintsugiuwu/flalac:0.2.0
 ContainerName=flalac
-AutoUpdate=registry
 PublishPort=8090:8090
 UserNS=keep-id
 Volume=%h/apps/flalac/config:/config:z

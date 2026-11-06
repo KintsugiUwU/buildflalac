@@ -82,9 +82,10 @@ Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md
 
 ## Releases
 
-`scripts/release.sh <version>` checks the checkout, tags it, builds the image with Podman
-(locally, or on `RELEASE_HOST` over ssh) and pushes it to `codeberg.org/kintsugiuwu/flalac`.
-Codeberg CI runs lint and tests on every push.
+Codeberg CI (Woodpecker) runs lint and tests on every push. Pushing a version tag such as
+`v0.2.0` (matching `version` in `pyproject.toml`) also builds the image and publishes it to
+`codeberg.org/kintsugiuwu/flalac` as `0.2.0` and `latest`. Pin a version in your quadlet or
+compose file so nothing changes until you choose to update.
 
 ## Licence
 

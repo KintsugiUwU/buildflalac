@@ -120,8 +120,16 @@ class Engine:
         root = self.s.source
         if not root.is_dir():
             raise SourceMissingError(f"source folder {root} is missing")
+        if self.s.target.resolve().is_relative_to(root.resolve()):
+            raise SourceMissingError(f"target folder {self.s.target} is inside the source")
+
+        def unreadable(error: OSError) -> None:
+            # A folder that can't be listed (network hiccup, permissions) must not make its
+            # songs look deleted, so the whole pass stops instead.
+            raise SourceMissingError(f"cannot read {error.filename}: {error.strerror}")
+
         found: dict[str, SourceFile] = {}
-        for dirpath, dirnames, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in os.walk(root, onerror=unreadable):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             for name in filenames:
                 if name.startswith(".") or not name.lower().endswith(SOURCE_SUFFIXES):

@@ -1,0 +1,26 @@
+# A version tag (v0.2.0) builds the image on Codeberg CI and pushes it to the Codeberg
+# registry as 0.2.0 and latest. Needs the repository secret codeberg_token (package
+# read and write). The plugin is pinned to :6; Codeberg only runs tagged plugin versions
+# with the privileges a build needs.
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+depends_on:
+  - test
+
+steps:
+  publish:
+    image: woodpeckerci/plugin-docker-buildx:6
+    settings:
+      registry: codeberg.org
+      repo: codeberg.org/kintsugiuwu/flalac
+      dockerfile: Containerfile
+      context: .
+      platforms: linux/amd64
+      tags:
+        - latest
+        - ${CI_COMMIT_TAG##v}
+      username: KintsugiUwU
+      password:
+        from_secret: codeberg_token
