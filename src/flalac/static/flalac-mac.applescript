@@ -30,7 +30,13 @@ on run
 	set notes to {}
 	repeat with pass from 1 to 2
 		try
-			set reply to askServer(appName, root)
+			set {pids, counts, locs} to readLibrary(appName)
+		on error message
+			display dialog "Could not read the " & appName & " library:" & return & message buttons {"OK"} default button 1 with icon stop
+			return
+		end try
+		try
+			set reply to askServer(root, pids, counts, locs)
 		on error message
 			display dialog "Could not reach flalac at " & serverURL & ":" & return & message buttons {"OK"} default button 1 with icon stop
 			return
@@ -64,6 +70,8 @@ on readLibrary(appName)
 	set code to "tell application \"" & appName & "\"
 	with timeout of 600 seconds
 		set lp to library playlist 1
+		-- An empty library has no file tracks to ask about; Music answers that with an error
+		if (count of file tracks of lp) is 0 then return {{}, {}, {}}
 		set pids to persistent ID of every file track of lp
 		set counts to played count of every file track of lp
 		set locs to location of every file track of lp
@@ -73,8 +81,7 @@ return {pids, counts, locs}"
 	return run script code
 end readLibrary
 
-on askServer(appName, root)
-	set {pids, counts, locs} to readLibrary(appName)
+on askServer(root, pids, counts, locs)
 	set out to {"mac" & tab & (computer name of (system info)), "root" & tab & root}
 	repeat with i from 1 to count of pids
 		set p to ""

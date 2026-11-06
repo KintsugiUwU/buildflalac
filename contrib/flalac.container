@@ -6,7 +6,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
-Image=codeberg.org/kintsugiuwu/flalac:0.3.0
+Image=codeberg.org/kintsugiuwu/flalac:0.3.1
 ContainerName=flalac
 PublishPort=8090:8090
 UserNS=keep-id
