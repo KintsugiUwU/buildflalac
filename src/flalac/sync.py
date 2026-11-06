@@ -27,6 +27,7 @@ from .config import Settings
 from .db import Database, Track
 
 SOURCE_SUFFIXES = (".flac", ".m4a")
+LRCLIB_RULES = "2"  # bump when lyrics.lookup() finds more, so earlier misses are asked again
 LYRICS_RETRY_SECONDS = 3600  # ask LRCLIB again at most once an hour after it was unreachable
 LRCLIB_PAUSE_SECONDS = 600  # after a failure, skip LRCLIB this long
 
@@ -74,6 +75,10 @@ class Engine:
         self.db = db
         self.client = client if client is not None else lyrics.LrclibClient()
         self.clock = clock
+        if settings.lyrics == "lrclib" and db.meta("lrclib_rules") != LRCLIB_RULES:
+            # Matching improved since these songs were looked up; ask LRCLIB again for them
+            db.ask_lrclib_again()
+            db.set_meta("lrclib_rules", LRCLIB_RULES)
         self.lock = threading.Lock()  # one pass at a time
         self.status: dict = {
             "phase": "idle",

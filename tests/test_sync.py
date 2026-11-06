@@ -28,7 +28,7 @@ def test_first_pass_mirrors_bit_identical_with_tags_cover_and_lyrics(workspace, 
     source, target, _ = workspace
     flac = song(source)
     flac.with_suffix(".lrc").write_text("[00:00.50]Hello there\n[00:01.00]General\n")
-    engine = make_engine()
+    engine = make_engine(lyrics="sidecar")
     engine.run_pass()
 
     out = target / ALBUM / "01 First.m4a"
@@ -78,7 +78,7 @@ def test_rename_moves_target_and_txt(workspace, make_engine):
     source, target, _ = workspace
     flac = song(source)
     flac.with_suffix(".lrc").write_text("[00:00.50]Words\n")
-    engine = make_engine()
+    engine = make_engine(lyrics="sidecar")
     engine.run_pass()
     new_dir = source / "Pola & Bryson" / "Renamed Album"
     new_dir.mkdir()
@@ -167,7 +167,7 @@ def test_edited_txt_is_embedded_and_never_overwritten(workspace, make_engine):
     source, target, _ = workspace
     flac = song(source)
     flac.with_suffix(".lrc").write_text("[00:00.50]Original\n")
-    engine = make_engine()
+    engine = make_engine(lyrics="sidecar")
     engine.run_pass()
     txt = target / ALBUM / "01 First.txt"
     txt.write_text("[Verse]\nMy own lyrics\n")
@@ -342,7 +342,7 @@ def test_no_temp_files_are_left_behind(workspace, make_engine):
 def test_lrclib_down_is_not_cached_and_is_retried_later(workspace, make_engine):
     source, target, _ = workspace
     first = song(source, "01 First", 1, seconds=3.0)
-    first.with_suffix(".lrc").write_text("[00:00.50]local words\n")
+    first.with_suffix(".lrc").write_text("[00:00.50]local words\n")  # ignored in lrclib mode
     song(source, "02 Second", 2, seconds=3.0)
     client = FakeLrclib(
         {
@@ -360,7 +360,7 @@ def test_lrclib_down_is_not_cached_and_is_retried_later(workspace, make_engine):
     engine = make_engine(client)
     engine.run_pass()
     track = engine.db.get(f"{ALBUM}/01 First.flac")
-    assert (track.lyrics_source, track.lyrics_retry) == ("lrc", 1)
+    assert (track.lyrics_source, track.lyrics_retry) == ("none", 1)
     assert len(client.calls) == 1  # LRCLIB is paused after the first failure
     assert engine.db.cached_lyrics("pola bryson emily makis|first|3") is None
     assert engine.run_pass().empty  # not retried before an hour has passed
@@ -401,7 +401,7 @@ def test_synced_style_and_switching_back_to_plain(workspace, make_engine):
     source, target, _ = workspace
     flac = song(source)
     flac.with_suffix(".lrc").write_text("[00:00.50]Hello there\n[00:01.00]General\n")
-    engine = make_engine(lyrics_style="synced")
+    engine = make_engine(lyrics="sidecar", lyrics_style="synced")
     engine.run_pass()
     out = target / ALBUM / "01 First.m4a"
     assert MP4(out)["\xa9lyr"] == ["[00:00.50]Hello there\n[00:01.00]General"]
@@ -459,3 +459,23 @@ def test_48k_sources_follow_the_limit(workspace, make_engine):
     song(source, "02 Second", 2, rate=48000, bits=16)
     make_engine(max_sample_rate=48000).run_pass()
     assert MP4(target / ALBUM / "02 Second.m4a").info.sample_rate == 48000
+
+
+def test_new_matching_rules_ask_lrclib_again_once(workspace, make_engine):
+    source, _, _ = workspace
+    song(source)
+    engine = make_engine()
+    engine.run_pass()
+    assert engine.db.get(f"{ALBUM}/01 First.flac").lyrics_source == "none"
+    engine.db.set_meta("lrclib_rules", "1")  # looked up with the old rules
+    found = {
+        "trackName": "First",
+        "artistName": "Pola & Bryson",
+        "duration": 30,  # another length: still fine for plain lyrics
+        "plainLyrics": "Found now",
+    }
+    again = make_engine(FakeLrclib({("First", "Pola & Bryson × Emily Makis"): [found]}))
+    again.run_pass()
+    assert again.db.get(f"{ALBUM}/01 First.flac").lyrics_source == "lrclib"
+    assert again.db.meta("lrclib_rules") == "2"
+    assert again.run_pass().empty  # only once

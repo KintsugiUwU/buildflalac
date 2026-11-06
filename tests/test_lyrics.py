@@ -106,16 +106,23 @@ def test_plain_style_uses_lrclib_plain_as_is(tmp_path: Path):
     assert (result.text, result.source, result.synced) == ("one block", "lrclib", False)
 
 
-def test_plain_style_order(tmp_path: Path):
+def test_lrclib_mode_never_reads_files_next_to_the_source(tmp_path: Path):
+    song = tmp_path / "01 Song.flac"
+    (tmp_path / "01 Song.lrc").write_text("[00:01.00]from lrc\n")
+    (tmp_path / "01 Song.txt").write_text("from txt\n")
+    assert choose(song, tags(), 200, "lrclib", "plain", online()).source == "lrclib"
+    assert choose(song, tags(), 200, "lrclib", "plain", online(plain="")).source == "none"
+    assert choose(song, tags(), 200, "lrclib", "synced", online()).source == "lrclib-synced"
+    assert choose(song, tags(), 200, "off", "plain", online()).source == "none"
+
+
+def test_sidecar_mode_uses_only_your_files(tmp_path: Path):
     song = tmp_path / "01 Song.flac"
     (tmp_path / "01 Song.lrc").write_text("[00:01.00]from lrc\n")
     assert choose(song, tags(), 200, "sidecar", "plain", online()).text == "from lrc"
-    assert choose(song, tags(), 200, "lrclib", "plain", online(plain="")).source == "lrc"
-    assert choose(song, tags(), 200, "off", "plain", online()).source == "none"
+    assert choose(song, tags(), 200, "sidecar", "synced", online()).source == "lrc-synced"
     (tmp_path / "01 Song.txt").write_text("[Verse]\nfrom txt\n")
-    asked = []
-    result = choose(song, tags(), 200, "lrclib", "plain", lambda *a: asked.append(a))
-    assert (result.text, asked) == ("[Verse]\nfrom txt", [])  # no LRCLIB request needed
+    assert choose(song, tags(), 200, "sidecar", "plain", online()).text == "[Verse]\nfrom txt"
 
 
 def test_synced_style_order(tmp_path: Path):
@@ -126,15 +133,13 @@ def test_synced_style_order(tmp_path: Path):
         "lrclib-synced",
         True,
     )
-    (tmp_path / "02 Song.lrc").write_text("[00:01.00]mine\n")
-    assert choose(song, tags(), 200, "lrclib", "synced", online()).source == "lrc-synced"
     plain_only = choose(tmp_path / "03 X.flac", tags(), 200, "lrclib", "synced", online(synced=""))
     assert (plain_only.source, plain_only.synced) == ("lrclib", False)
 
 
 def test_falls_back_to_tag_lyrics_and_instrumental(tmp_path: Path):
     result = choose(
-        tmp_path / "x.flac", tags(lyrics="in the tag"), 200, "lrclib", "plain", lambda *_: Answer()
+        tmp_path / "x.flac", tags(lyrics="in the tag"), 200, "sidecar", "plain", lambda *_: Answer()
     )
     assert (result.text, result.source) == ("in the tag", "tag")
     result = choose(
@@ -147,9 +152,9 @@ def test_retry_requested_when_lrclib_is_down(tmp_path: Path):
     song = tmp_path / "03 Song.flac"
     result = choose(song, tags(), 200, "lrclib", "plain", lambda *_: None)
     assert (result.source, result.retry) == ("none", True)
-    (tmp_path / "03 Song.lrc").write_text("[00:01.00]local\n")
+    (tmp_path / "03 Song.lrc").write_text("[00:01.00]local\n")  # never used in lrclib mode
     result = choose(song, tags(), 200, "lrclib", "plain", lambda *_: None)
-    assert (result.text, result.source, result.retry) == ("local", "lrc", True)
+    assert (result.text, result.source, result.retry) == ("", "none", True)
 
 
 def test_main_artist():
@@ -158,3 +163,51 @@ def test_main_artist():
     assert main_artist("Flume feat. Anthony for Cleopatra") == "Flume"
     assert main_artist("Pola & Bryson × Emily Makis") == "Pola"
     assert main_artist("Flume") == "Flume"
+
+
+def lrclib_entry(
+    track="Title", artist="Artist", duration=200.0, plain="a\n\nb", synced="[00:01.00]a"
+):
+    return {
+        "trackName": track,
+        "artistName": artist,
+        "duration": duration,
+        "plainLyrics": plain,
+        "syncedLyrics": synced,
+    }
+
+
+def test_plain_from_another_length_when_nothing_closer():
+    # Bon Jovi, Queen, Playahitty: the same song listed with another length
+    answer = lookup([lrclib_entry(duration=256.0)], "Title", "Artist", 200)
+    assert (answer.plain, answer.synced) == ("a\n\nb", "")  # synced needs the right length
+    close = lookup(
+        [lrclib_entry(duration=250, plain="far"), lrclib_entry(duration=201, plain="near")],
+        "Title",
+        "Artist",
+        200,
+    )
+    assert close.plain == "near"
+
+
+def test_exact_title_beats_a_remix_and_a_suffix_is_a_last_resort():
+    remix = lrclib_entry(track="Title (Some Remix)", duration=200, plain="remix")
+    other_length = lrclib_entry(track="Title", duration=203, plain="original")
+    assert lookup([remix, other_length], "Title", "Artist", 200).plain == "original"
+    assert lookup([lrclib_entry(track="Footloose (Footloose)")], "Footloose", "Artist", 200).found
+    assert not lookup(
+        [lrclib_entry(track="Footloose (Footloose)", duration=230)], "Footloose", "Artist", 200
+    ).found
+
+
+def test_artist_credits_and_apostrophes():
+    assert lookup(
+        [lrclib_entry(artist="LOUDPVCK & KillaGraham")], "Title", "LOUDPVCK + KillaGraham", 200
+    ).found
+    assert lookup(
+        [lrclib_entry(track="California Dreamin", artist="The Mamas And Papas")],
+        "California Dreamin’",
+        "The Mama’s and the Papa’s",
+        200,
+    ).found
+    assert not lookup([lrclib_entry(artist="Someone Else")], "Title", "Artist", 200).found

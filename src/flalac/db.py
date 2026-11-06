@@ -131,6 +131,20 @@ class Database:
                 "INSERT OR REPLACE INTO lyrics_cache VALUES (?,?,?)", (key, text, time.time())
             )
 
+    def ask_lrclib_again(self) -> int:
+        """Forget LRCLIB answers without lyrics and mark songs whose lyrics did not come from
+        LRCLIB, so the next pass asks again. Used once when the matching rules change."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM lyrics_cache WHERE json_valid(text)"
+                " AND coalesce(json_extract(text, '$.plain'), '') = ''"
+                " AND NOT coalesce(json_extract(text, '$.instrumental'), 0)"
+            )
+            return self._conn.execute(
+                "UPDATE tracks SET lyrics_retry=1, updated=0 WHERE lyrics_locked=0"
+                " AND lyrics_source IN ('lrc', 'txt', 'tag', 'none')"
+            ).rowcount
+
     # events ------------------------------------------------------------
     def event(self, kind: str, rel: str | None = None, detail: str = "") -> None:
         with self._lock:

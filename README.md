@@ -41,7 +41,7 @@ Tip: start once with `DRY_RUN=true`. The log then lists everything flalac *would
 | `AAC_BITRATE` | `256` | kbit/s when the target is AAC |
 | `MAX_BIT_DEPTH` | `16` | reduce higher bit depths (with dither); `0` keeps the source |
 | `MAX_SAMPLE_RATE` | `44100` | resample anything higher to this rate; `0` keeps the source |
-| `LYRICS` | `lrclib` | `lrclib`: LRCLIB, else local files; `sidecar`: only local `.txt`/`.lrc`; `off` |
+| `LYRICS` | `lrclib` | `lrclib`: LRCLIB only; `sidecar`: only your `.txt`/`.lrc` next to the source; `off` |
 | `LYRICS_STYLE` | `plain` | `plain` or `synced` (also switchable in the web UI) |
 | `WORKERS` | half the CPUs (1–4) | songs converted in parallel |
 | `RESCAN_MINUTES` | `30` | full rescan interval, on top of watching for changes; `0` turns it off |
@@ -56,17 +56,22 @@ Volumes: `/source` (read-only), `/target`, `/config`.
 
 ## Lyrics
 
-**Plain** (default): your `.txt` next to the source file → LRCLIB's plain lyrics, exactly as on
-lrclib.net → the `.lrc` next to the source without its timestamps → lyrics already in the tags.
-A `.txt` is written next to each converted song and the text is embedded.
+With `LYRICS=lrclib` (the default) lyrics come only from LRCLIB; files next to the source are
+never read. `LYRICS=sidecar` uses only your own files instead (`.txt`, else `.lrc` without its
+timestamps, else lyrics already in the tags).
 
-**Synced**: your `.lrc` next to the source file → LRCLIB's synced lyrics; songs without synced
-lyrics fall back to plain. A `.lrc` is written next to each song and the timed text is embedded
-(for players that show synced lyrics; iPods and the Music app display it as text).
+**Plain** (default): LRCLIB's plain lyrics, exactly as on lrclib.net. A `.txt` is written next
+to each converted song and the text is embedded.
 
-LRCLIB is asked once per song, politely (one request at a time), only for entries within 2 s of
-the song's length, and the answer is cached. If LRCLIB is down, local lyrics are used for now
-and the song is asked again later. Songs LRCLIB marks as instrumental are shown as such. Edit a
+**Synced**: LRCLIB's synced lyrics; songs without synced lyrics fall back to plain. A `.lrc` is
+written next to each song and the timed text is embedded (for players that show synced lyrics;
+iPods and the Music app display it as text).
+
+LRCLIB is asked once per song, politely (one request at a time), and the answer is cached. An
+entry needs a shared artist and the same title; the best is one within 2 s of the song's length,
+else the same title at another length (an edit or remaster; plain lyrics only), else a title with
+an extra suffix such as "Footloose (Footloose)". If LRCLIB is down, the song is asked again later.
+Songs LRCLIB marks as instrumental are shown as such. Edit a
 lyrics file next to a converted song and flalac keeps your version.
 
 ## Develop
