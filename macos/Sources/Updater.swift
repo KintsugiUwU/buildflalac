@@ -26,12 +26,13 @@ final class Updater: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let current = current
         URLSession.shared.dataTask(with: request) { data, response, _ in
-            let ok = (response as? HTTPURLResponse)?.statusCode == 200
-            let release = ok ? Self.newer(than: current, in: data) : nil
+            // Any HTTP answer means Codeberg was reached; 404 just means no release yet.
+            let status = (response as? HTTPURLResponse)?.statusCode
+            let release = status == 200 ? Self.newer(than: current, in: data) : nil
             Task { @MainActor in
                 self.available = release
                 if answerAlways {
-                    self.tell(release, reached: ok)
+                    self.tell(release, reached: status != nil)
                 }
             }
         }.resume()
