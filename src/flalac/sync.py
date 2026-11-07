@@ -28,6 +28,7 @@ from .db import Database, Track
 
 SOURCE_SUFFIXES = (".flac", ".m4a")
 NO_LYRICS_FILE = "no-lyrics.txt"
+SCAN_LOOKUPS = 16  # file lookups in flight at once while scanning (network round trips overlap)
 LRCLIB_RULES = "2"  # bump when lyrics.lookup() finds more, so earlier misses are asked again
 LYRICS_RETRY_SECONDS = 3600  # ask LRCLIB again at most once an hour after it was unreachable
 LRCLIB_PAUSE_SECONDS = 600  # after a failure, skip LRCLIB this long
@@ -139,26 +140,32 @@ class Engine:
             # songs look deleted, so the whole pass stops instead.
             raise SourceMissingError(f"cannot read {error.filename}: {error.strerror}")
 
-        found: dict[str, SourceFile] = {}
+        paths: list[Path] = []
         for dirpath, dirnames, filenames in os.walk(root, onerror=unreadable):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-            for name in filenames:
-                if name.startswith(".") or not name.lower().endswith(SOURCE_SUFFIXES):
-                    continue
-                path = Path(dirpath) / name
-                try:
-                    stat = path.stat()
-                except FileNotFoundError:
-                    continue
-                side = 0.0
-                # Lyrics files next to the source matter only in sidecar mode; skipping the two
-                # lookups per song keeps scans of a network share short.
-                for suffix in (".lrc", ".txt") if self.s.lyrics != "lrclib" else ():
-                    with contextlib.suppress(FileNotFoundError):
-                        side = max(side, path.with_suffix(suffix).stat().st_mtime)
-                rel = path.relative_to(root).as_posix()
-                found[rel] = SourceFile(rel, path, stat.st_size, stat.st_mtime, side)
-        return found
+            paths += [
+                Path(dirpath) / name
+                for name in filenames
+                if not name.startswith(".") and name.lower().endswith(SOURCE_SUFFIXES)
+            ]
+        # Each lookup is a network round trip on a share; they overlap well, so run many at once.
+        with ThreadPoolExecutor(max_workers=SCAN_LOOKUPS) as pool:
+            entries = pool.map(self._source_file, paths)
+        return {sf.rel: sf for sf in entries if sf is not None}
+
+    def _source_file(self, path: Path) -> SourceFile | None:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        side = 0.0
+        # Lyrics files next to the source matter only in sidecar mode; skipping the two lookups
+        # per song keeps scans of a network share short.
+        for suffix in (".lrc", ".txt") if self.s.lyrics != "lrclib" else ():
+            with contextlib.suppress(FileNotFoundError):
+                side = max(side, path.with_suffix(suffix).stat().st_mtime)
+        rel = path.relative_to(self.s.source).as_posix()
+        return SourceFile(rel, path, stat.st_size, stat.st_mtime, side)
 
     def target_rel(self, rel: str) -> str:
         return Path(rel).with_suffix(self.s.extension).as_posix()
@@ -201,13 +208,13 @@ class Engine:
         by_identity: dict[str, list[str]] = {}
         for rel, t in gone.items():
             by_identity.setdefault(t.identity, []).append(rel)
-        for sf in fresh:
-            try:
-                identity = self._identity(sf)
-            except Exception as error:
+        with ThreadPoolExecutor(max_workers=SCAN_LOOKUPS) as pool:  # header reads, in parallel
+            identities = list(pool.map(self._identity_or_error, fresh))
+        for sf, identity in zip(fresh, identities, strict=True):
+            if isinstance(identity, Exception):
                 if sf.rel not in self._skipped:  # e.g. an AAC .m4a: not a lossless source
                     self._skipped.add(sf.rel)
-                    self.db.event("skipped", sf.rel, str(error)[:200])
+                    self.db.event("skipped", sf.rel, str(identity)[:200])
                 continue
             if by_identity.get(identity):
                 old = by_identity[identity].pop()
@@ -223,6 +230,12 @@ class Engine:
         else:
             plan.deletes = deletes
         return plan
+
+    def _identity_or_error(self, sf: SourceFile) -> str | Exception:
+        try:
+            return self._identity(sf)
+        except Exception as error:
+            return error
 
     def _identity(self, sf: SourceFile) -> str:
         audio = media.facts(sf.path)
