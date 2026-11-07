@@ -198,9 +198,8 @@ private struct Changes: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines, id: \.self) { line in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "checkmark")
-                        .font(.callout.weight(.semibold))
-                        .foregroundColor(.secondary)
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
                     Text(line)
                         .fixedSize(horizontal: false, vertical: true)
                 }

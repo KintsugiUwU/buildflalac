@@ -151,7 +151,9 @@ class Engine:
                 except FileNotFoundError:
                     continue
                 side = 0.0
-                for suffix in (".lrc", ".txt"):
+                # Lyrics files next to the source matter only in sidecar mode; skipping the two
+                # lookups per song keeps scans of a network share short.
+                for suffix in (".lrc", ".txt") if self.s.lyrics != "lrclib" else ():
                     with contextlib.suppress(FileNotFoundError):
                         side = max(side, path.with_suffix(suffix).stat().st_mtime)
                 rel = path.relative_to(root).as_posix()

@@ -108,10 +108,31 @@ class AudioFacts:
     stream_md5: str  # FLAC STREAMINFO MD5, "" when absent
 
 
+def _flac_streaminfo(path: Path) -> AudioFacts | None:
+    """The STREAMINFO block every FLAC starts with, read directly: identifying a song needs these
+    42 bytes, not the whole header with its cover art, which is much slower over a share."""
+    with path.open("rb") as stream:
+        head = stream.read(42)
+    if len(head) < 42 or head[:4] != b"fLaC" or head[4] & 0x7F != 0:
+        return None  # e.g. an ID3 tag in front; the full reader handles it
+    block = head[8:42]
+    rate = (block[10] << 12) | (block[11] << 4) | (block[12] >> 4)
+    channels = ((block[12] >> 1) & 0x07) + 1
+    bits = (((block[12] & 0x01) << 4) | (block[13] >> 4)) + 1
+    samples = ((block[13] & 0x0F) << 32) | int.from_bytes(block[14:18], "big")
+    if not rate or not samples:
+        return None
+    md5 = block[18:34].hex() if any(block[18:34]) else ""
+    return AudioFacts("flac", rate, bits, channels, samples / rate, md5)
+
+
 def facts(path: Path) -> AudioFacts | None:
     suffix = path.suffix.lower()
     try:
         if suffix == ".flac":
+            fast = _flac_streaminfo(path)
+            if fast is not None:
+                return fast
             info = FLAC(path).info
             md5 = f"{info.md5_signature:032x}" if info.md5_signature else ""
             return AudioFacts(

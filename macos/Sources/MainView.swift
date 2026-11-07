@@ -372,18 +372,17 @@ private struct StepRow: View {
             Group {
                 switch state {
                 case .done:
-                    Image(systemName: "checkmark")
-                        .font(.callout.weight(.semibold))
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
                 case .running:
                     ProgressView()
                         .scaleEffect(0.5)
                 case .waiting:
                     Image(systemName: "circle")
-                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
             .frame(width: 16, height: 16)
-            .foregroundColor(.secondary)
             Text(title)
                 .foregroundColor(state == .waiting ? .secondary : .primary)
         }
