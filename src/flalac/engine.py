@@ -16,9 +16,11 @@ stderr is free-form log text.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -161,6 +163,20 @@ def _test_jellyfin(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stop_with_children() -> None:
+    """Cancel in the app sends SIGTERM: stop the conversions in flight (ffmpeg) too. The engine
+    runs in its own process group, so it can signal exactly itself and its children. Files
+    left half-written are temp files, removed at the start of the next sync."""
+    with contextlib.suppress(OSError):
+        os.setpgrp()
+
+    def stop(signum: int, frame: object) -> None:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.killpg(os.getpgrp(), signal.SIGTERM)
+
+    signal.signal(signal.SIGTERM, stop)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.command == "version":
@@ -168,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "test-jellyfin":
         return _test_jellyfin(args)
+    if argv is None:  # the real program, not a test calling main() directly
+        _stop_with_children()
     return _sync(args)
 
 

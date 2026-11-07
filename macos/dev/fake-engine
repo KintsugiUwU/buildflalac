@@ -1,0 +1,140 @@
+#!/bin/bash
+# A stand-in for flalac-engine, for developing the app: it speaks the engine protocol with
+# made-up songs and delays and touches no files. Run the app with FLALAC_ENGINE=<this file>.
+#
+# FLALAC_FAKE_SCENARIO (or the first word of the file named by FLALAC_FAKE_SCENARIO_FILE):
+#   normal        converts FLALAC_FAKE_TOTAL songs (24), updates the library, syncs plays
+#   held-deletes  as normal, then holds 40 deletions back (removes them with --confirm-deletes)
+#   error         the FLAC folder is not reachable (exit 1)
+#   crash         stops with SIGSEGV halfway, without a message
+# FLALAC_FAKE_SECONDS: how long converting takes (6).
+set -u
+
+scenario=${FLALAC_FAKE_SCENARIO:-}
+if [ -z "$scenario" ] && [ -n "${FLALAC_FAKE_SCENARIO_FILE:-}" ] && [ -f "$FLALAC_FAKE_SCENARIO_FILE" ]; then
+    scenario=$(head -n 1 "$FLALAC_FAKE_SCENARIO_FILE")
+fi
+scenario=${scenario:-normal}
+
+say() { printf '%s\n' "$1"; }       # a JSON message on stdout
+log() { printf '%s\n' "$1" >&2; }   # free-form log text on stderr
+fail() { say "{\"type\":\"error\",\"message\":\"$1\"}"; exit "${2:-1}"; }
+json() { local s=${1//\\/\\\\}; printf '%s' "${s//\"/\\\"}"; }
+
+trap 'log "Stopped by the app."; exit 143' TERM INT
+
+# The key must arrive in the environment, never as an argument.
+if [ -n "${FLALAC_JELLYFIN_KEY:-}" ]; then
+    for arg in "$@"; do
+        [ "$arg" = "$FLALAC_JELLYFIN_KEY" ] && fail "The API key was passed as an argument." 2
+    done
+fi
+
+command=${1:-}
+[ $# -gt 0 ] && shift
+source= target= state= library= jf_url= jf_user= jf_path= lyrics= style= depth= rate= confirm=0
+while [ $# -gt 0 ]; do
+    case $1 in
+        --source) source=$2; shift 2 ;;
+        --target) target=$2; shift 2 ;;
+        --state) state=$2; shift 2 ;;
+        --library) library=$2; shift 2 ;;
+        --jellyfin-url) jf_url=$2; shift 2 ;;
+        --jellyfin-user) jf_user=$2; shift 2 ;;
+        --jellyfin-music-path) jf_path=$2; shift 2 ;;
+        --lyrics) lyrics=$2; shift 2 ;;
+        --lyrics-style) style=$2; shift 2 ;;
+        --max-bit-depth) depth=$2; shift 2 ;;
+        --max-sample-rate) rate=$2; shift 2 ;;
+        --confirm-deletes) confirm=1; shift ;;
+        *) fail "Unknown argument: $(json "$1")" 2 ;;
+    esac
+done
+
+case $command in
+version)
+    say '{"type":"version","version":"0.4.0-fake"}'
+    exit 0
+    ;;
+test-jellyfin)
+    [ -n "$jf_url" ] && [ -n "$jf_user" ] || fail "test-jellyfin needs --jellyfin-url and --jellyfin-user." 2
+    [ -n "${FLALAC_JELLYFIN_KEY:-}" ] || fail "No Jellyfin API key was given."
+    log "Asking $jf_url for the plays of $jf_user (music path ${jf_path:-default}, key given)"
+    sleep 1
+    case $jf_url in *unreachable*) fail "Jellyfin at $(json "$jf_url") did not answer." ;; esac
+    say '{"type":"jellyfin","ok":true,"songs":2214,"plays":44788}'
+    exit 0
+    ;;
+sync) ;;
+*) fail "Unknown command: $(json "$command")" 2 ;;
+esac
+
+[ -n "$source" ] && [ -n "$target" ] || fail "sync needs --source and --target." 2
+case $library in itunes | music | none) ;; *) fail "--library must be itunes, music or none." 2 ;; esac
+case ${lyrics:-lrclib} in lrclib | off) ;; *) fail "--lyrics must be lrclib or off." 2 ;; esac
+case ${style:-plain} in plain | synced) ;; *) fail "--lyrics-style must be plain or synced." 2 ;; esac
+case ${depth:-16} in 16 | 24 | 0) ;; *) fail "--max-bit-depth must be 16, 24 or 0." 2 ;; esac
+case ${rate:-44100} in 44100 | 48000 | 0) ;; *) fail "--max-sample-rate must be 44100, 48000 or 0." 2 ;; esac
+[ -z "$jf_url" ] || [ -n "$jf_user" ] || fail "--jellyfin-url needs --jellyfin-user." 2
+
+state=${state:-$(dirname "$target")/.flalac}
+app=iTunes; [ "$library" = music ] && app=Music
+log "fake-engine $scenario: $source -> $target, library $library, lyrics ${lyrics:-lrclib} ${style:-}, ${depth:-16}-bit ${rate:-44100} Hz"
+log "Jellyfin: ${jf_url:-off} ${jf_user:+user $jf_user} ${jf_path:+path $jf_path} (key $([ -n "${FLALAC_JELLYFIN_KEY:-}" ] && echo given || echo "not given"))"
+if [ -f "$state/no-lyrics.txt" ]; then
+    log "$(grep -cv -e '^#' -e '^[[:space:]]*$' "$state/no-lyrics.txt") songs are kept without lyrics ($state/no-lyrics.txt)"
+fi
+
+say '{"type":"stage","stage":"checking"}'
+log "Reading the FLAC folder..."
+sleep 1
+[ "$scenario" = error ] && fail "The FLAC folder $(json "$source") is not reachable. Connect the share."
+
+songs=(
+    "Flume/Skin/05 Say It.flac" "Bonobo/Migration/01 Migration.flac"
+    "Robert Miles/Dreamland/01 Children (Dream version).flac" "Air/Moon Safari/01 La femme d'argent.flac"
+    "Massive Attack/Mezzanine/01 Angel.flac" "Daft Punk/Discovery/03 Digital Love.flac"
+    "Röyksopp/Melody A.M./02 Eple.flac" "Moby/Play/01 Honey.flac"
+)
+total=${FLALAC_FAKE_TOTAL:-24}
+converted=$total
+[ $confirm = 1 ] && converted=0
+if [ "$converted" -gt 0 ]; then
+    say '{"type":"stage","stage":"converting"}'
+    ticks=$(( ${FLALAC_FAKE_SECONDS:-6} * 4 ))
+    done=0 tick=0
+    while [ $done -lt $total ]; do
+        tick=$((tick + 1))
+        done=$(( total * tick / ticks )); [ $done -gt $total ] && done=$total
+        current=${songs[$(( tick % ${#songs[@]} ))]}
+        log "Converted $current (ALAC, ${depth:-16}-bit)"
+        say "{\"type\":\"progress\",\"stage\":\"converting\",\"done\":$done,\"total\":$total,\"current\":\"$(json "$current")\"}"
+        [ "$scenario" = crash ] && [ $tick -ge $((ticks / 2)) ] && kill -SEGV $$
+        sleep 0.25
+    done
+fi
+
+added=$converted removed=0 lib_removed=0 held=0
+[ "$scenario" = held-deletes ] && { if [ $confirm = 1 ]; then removed=40; else held=40; fi; }
+[ $removed -gt 0 ] && log "Removed 40 songs that are gone from the FLAC folder"
+if [ "$library" != none ]; then
+    say '{"type":"stage","stage":"library"}'
+    [ $added -gt 0 ] && say "{\"type\":\"progress\",\"stage\":\"library\",\"message\":\"$added of $added added to $app\"}"
+    sleep 1
+    lib_removed=$removed
+    [ $lib_removed -gt 0 ] && say "{\"type\":\"progress\",\"stage\":\"library\",\"message\":\"$lib_removed removed from $app\"}"
+    [ -n "$jf_url" ] && say '{"type":"progress","stage":"library","message":"Merging play counts with Jellyfin"}' && sleep 1
+fi
+say '{"type":"stage","stage":"done"}'
+[ $held -gt 0 ] && say "{\"type\":\"held-deletes\",\"count\":$held}"
+
+plays=0 notes='[]'
+if [ -n "$jf_url" ] && [ "$library" != none ] && [ $confirm = 0 ]; then
+    plays=44 notes='["2 play counts updated in Jellyfin"]'
+fi
+library_json=null
+if [ "$library" != none ]; then
+    library_json="{\"app\":\"$app\",\"added\":$added,\"removed\":$lib_removed,\"moved\":0,\"refreshed\":$(( converted > 0 ? 3 : 0 )),\"plays\":$plays,\"failed\":0}"
+fi
+say "{\"type\":\"summary\",\"converted\":$converted,\"retagged\":$(( converted > 0 ? 3 : 0 )),\"renamed\":0,\"removed\":$removed,\"errors\":0,\"unsettled\":0,\"held_deletes\":$held,\"seconds\":12.5,\"library\":$library_json,\"notes\":$notes}"
+exit 0

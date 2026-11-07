@@ -94,11 +94,13 @@ Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md
 
 ## Mac app
 
-`packaging/build_mac_app.sh` builds `flalac.app` for Apple Silicon (macOS 11+): Python, flalac
-and FFmpeg inside, nothing to install. Put it on the music drive next to `ALAC/` and
-double-click it: it converts what changed in the FLAC folder onto the drive (state in
-`.flalac/` on the drive), brings the iTunes or Music library in step and syncs play counts with
-Jellyfin. See `packaging/README.md`.
+**Flalac** is a native macOS app (SwiftUI, Apple Silicon, macOS 11+) built on the same engine:
+choose the FLAC folder and the ALAC folder (for example on an external drive), press **Sync**,
+and it converts what changed, keeps the iTunes or Music library in step and syncs play counts
+with Jellyfin. Settings (⌘,) cover Jellyfin (the API key is kept in the Keychain), lyrics, songs
+that must not get lyrics, and ALAC quality. Everything is inside the app: Python, the engine and
+FFmpeg. Build it with `FLALAC_BUILD=engine packaging/build_mac_app.sh` then
+`ENGINE_DIR=packaging/dist/flalac-engine macos/build.sh`; see `macos/README.md`.
 
 ## Macs
 
