@@ -5,7 +5,11 @@
     <drive>/.flalac/       state: flalac.db, settings.json, no-lyrics.txt
 
 Double-click it: it converts what changed in the FLAC folder (usually on a NAS share) onto the
-drive, then says what it did. The drive carries everything, so any Mac can use the copy.
+drive, brings the iTunes (or Music) library in step with it, syncs play counts with Jellyfin
+when set up, then says what it did. The drive carries everything, so any Mac can use the copy.
+
+Jellyfin: "jellyfin_url" and "jellyfin_user" in settings.json; the API key is kept in this
+Mac's Keychain (service "flalac-jellyfin"), never on the drive.
 """
 
 from __future__ import annotations
@@ -20,10 +24,51 @@ from pathlib import Path
 
 from . import __version__
 from .config import Settings
+from .db import Database
+from .itunes import LibraryError, app_name, sync_library
 from .once import OnceError, run
 
 DEFAULT_SOURCE = "/Volumes/HelixNAS/NVME/Music/FLAC"
 SETTINGS_FILE = "settings.json"
+KEYCHAIN_SERVICE = "flalac-jellyfin"
+
+
+def ask_and_store_key(user: str) -> str:
+    """Asks for the Jellyfin API key once (hidden typing) and keeps it in the Keychain."""
+    try:
+        key = _osascript(
+            f"text returned of (display dialog {_quote(f'Jellyfin API key for {user}:')} "
+            'default answer "" with hidden answer with title "flalac")'
+        )
+    except RuntimeError:
+        return ""
+    if key:
+        subprocess.run(
+            [
+                "security",
+                "add-generic-password",
+                "-U",
+                "-s",
+                KEYCHAIN_SERVICE,
+                "-a",
+                user,
+                "-l",
+                "flalac Jellyfin API key",
+                "-w",
+                key,
+            ],
+            capture_output=True,
+        )
+    return key
+
+
+def keychain_key(user: str) -> str:
+    result = subprocess.run(
+        ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", user, "-w"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def drive_root() -> Path:
@@ -100,6 +145,15 @@ def load_settings(drive: Path) -> Settings | None:
         lyrics_files=False,
         max_bit_depth=int(stored.get("max_bit_depth", 16)),
         max_sample_rate=int(stored.get("max_sample_rate", 44100)),
+        jellyfin_url=str(stored.get("jellyfin_url", "")),
+        jellyfin_user=str(stored.get("jellyfin_user", "")),
+        jellyfin_api_key=(
+            keychain_key(str(stored["jellyfin_user"]))
+            or ask_and_store_key(str(stored["jellyfin_user"]))
+        )
+        if stored.get("jellyfin_url") and stored.get("jellyfin_user")
+        else "",
+        jellyfin_music_path=str(stored.get("jellyfin_music_path", "/Media/Music/FLAC")),
     )
 
 
@@ -131,7 +185,18 @@ def main() -> int:
     except OnceError as error:
         dialog(str(error), stop=True)
         return 1
-    dialog(summary.text())
+    app = app_name()
+    notify(f"Bringing the {app} library in step")
+    db = Database(settings.config / "flalac.db")
+    try:
+        library = sync_library(settings, db, f"{app} library on {drive.name}", notify, app)
+    except LibraryError as error:
+        dialog(f"{summary.text()}\n\nThe {app} library could not be updated:\n{error}", stop=True)
+        return 1
+    finally:
+        db.close()
+    jellyfin = "" if settings.jellyfin_api_key else "\nPlay counts: Jellyfin is not set up."
+    dialog(f"{summary.text()}\n\n{library.text()}{jellyfin}")
     return 0
 
 
