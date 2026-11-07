@@ -26,7 +26,9 @@ def test_sync_without_library(tmp_path, capsys):
     args = ["sync", "--source", str(source), "--target", str(target), "--lyrics", "off"]
     assert engine.main(args) == 0
     out = lines(capsys)
-    assert [m["stage"] for m in out if m["type"] == "stage"] == ["checking", "converting", "done"]
+    stages = [m["stage"] for m in out if m["type"] == "stage"]
+    assert stages[0] == "checking" and stages[-1] == "done"
+    assert stages.count("converting") <= 1  # announced once, when the first song starts
     summary = out[-1]
     assert summary["type"] == "summary"
     assert (summary["converted"], summary["errors"], summary["library"]) == (1, 0, None)

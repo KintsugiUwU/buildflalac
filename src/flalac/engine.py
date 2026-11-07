@@ -85,10 +85,14 @@ def _settings(args: argparse.Namespace) -> Settings:
 
 def _sync(args: argparse.Namespace) -> int:
     settings = _settings(args)
-    emit("stage", stage="checking")
-    emit("stage", stage="converting")
+    emit("stage", stage="checking")  # scanning the FLAC folder until songs start converting
+    converting = False
 
     def progress(done: int, total: int, current: str) -> None:
+        nonlocal converting
+        if not converting:
+            converting = True
+            emit("stage", stage="converting")
         emit("progress", stage="converting", done=done, total=total, current=current)
 
     try:
