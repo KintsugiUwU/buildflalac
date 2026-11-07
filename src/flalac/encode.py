@@ -107,8 +107,17 @@ def verify(source: Path, encoded: Path, audio: AudioFacts, job: Plan) -> None:
     )
     if check.returncode != 0 or check.stderr.strip():
         raise EncodeError(f"output does not decode cleanly: {check.stderr.strip()[:200]}")
-    if job.lossless and pcm_md5(source, audio.bits) != pcm_md5(encoded, job.bits):
+    if job.lossless and expected_md5(source, audio) != pcm_md5(encoded, job.bits):
         raise EncodeError("decoded audio differs from the source")
+
+
+def expected_md5(source: Path, audio: AudioFacts) -> str:
+    """MD5 of the source's decoded audio. A 16-bit FLAC carries exactly that checksum in its
+    header (STREAMINFO), so the source is not read a second time, which halves the reading
+    over a network share; anything else is decoded."""
+    if audio.kind == "flac" and audio.bits == 16 and audio.stream_md5:
+        return audio.stream_md5
+    return pcm_md5(source, audio.bits)
 
 
 def publish(tmp: Path, destination: Path) -> None:
