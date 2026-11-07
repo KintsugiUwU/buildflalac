@@ -2,7 +2,9 @@
 
     flalac-engine sync --source FLAC --target ALAC [--state DIR] --library itunes|music|none
                        [--jellyfin-url URL --jellyfin-user USER] [--lyrics lrclib|off]
-                       [--lyrics-style plain|synced] [--confirm-deletes]
+                       [--lyrics-style plain|synced] [--max-bit-depth 16|24|0]
+                       [--max-sample-rate 44100|48000|0] [--jellyfin-music-path PATH]
+                       [--confirm-deletes]
     flalac-engine test-jellyfin --jellyfin-url URL --jellyfin-user USER
     flalac-engine version
 
@@ -48,6 +50,8 @@ def _parser() -> argparse.ArgumentParser:
     sync.add_argument("--library", choices=("itunes", "music", "none"), default="none")
     sync.add_argument("--lyrics", choices=("lrclib", "off"), default="lrclib")
     sync.add_argument("--lyrics-style", choices=("plain", "synced"), default="plain")
+    sync.add_argument("--max-bit-depth", type=int, choices=(16, 24, 0), default=16)
+    sync.add_argument("--max-sample-rate", type=int, choices=(44100, 48000, 0), default=44100)
     sync.add_argument("--confirm-deletes", action="store_true")
     for command in (sync, commands.add_parser("test-jellyfin")):
         command.add_argument("--jellyfin-url", default="")
@@ -68,6 +72,8 @@ def _settings(args: argparse.Namespace) -> Settings:
         lyrics=args.lyrics,
         lyrics_style=args.lyrics_style,
         lyrics_files=False,
+        max_bit_depth=args.max_bit_depth,
+        max_sample_rate=args.max_sample_rate,
         jellyfin_url=args.jellyfin_url,
         jellyfin_user=args.jellyfin_user,
         jellyfin_api_key=key,

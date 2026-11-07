@@ -46,3 +46,24 @@ def test_jellyfin_test_needs_a_key(capsys, monkeypatch):
     args = ["test-jellyfin", "--jellyfin-url", "http://x", "--jellyfin-user", "u"]
     assert engine.main(args) == 1
     assert lines(capsys)[-1]["type"] == "error"
+
+
+def test_quality_options_reach_the_settings(tmp_path):
+    args = engine._parser().parse_args(
+        [
+            "sync",
+            "--source",
+            "s",
+            "--target",
+            str(tmp_path / "A"),
+            "--max-bit-depth",
+            "24",
+            "--max-sample-rate",
+            "0",
+            "--jellyfin-music-path",
+            "/music",
+        ]
+    )
+    s = engine._settings(args)
+    assert (s.max_bit_depth, s.max_sample_rate, s.jellyfin_music_path) == (24, 0, "/music")
+    assert s.config == tmp_path / ".flalac"
