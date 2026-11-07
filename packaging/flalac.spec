@@ -16,6 +16,9 @@ ROOT = HERE.parent
 FFMPEG_DIR = Path(os.environ["FLALAC_FFMPEG_DIR"])
 MIN_MACOS = os.environ.get("FLALAC_MIN_MACOS", "11.0")
 BUNDLE_ID = "com.davidepetris.flalac"
+# FLALAC_BUILD=engine makes the command-line engine folder the SwiftUI app embeds instead.
+ENGINE = os.environ.get("FLALAC_BUILD", "app") == "engine"
+NAME = "flalac-engine" if ENGINE else "flalac"
 
 if (ROOT / "src" / "flalac" / "macapp.py").is_file():
     print("flalac.spec: entry flalac.macapp:main")
@@ -44,18 +47,18 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="flalac",
+    name=NAME,
     debug=False,
     strip=False,
     upx=False,
-    console=False,
+    console=ENGINE,
     argv_emulation=False,
     target_arch="arm64",
     codesign_identity=None,  # ad-hoc signature
     entitlements_file=None,
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="flalac")
-app = BUNDLE(
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name=NAME)
+app = None if ENGINE else BUNDLE(
     coll,
     name="flalac.app",
     icon=str(HERE / "flalac.icns"),

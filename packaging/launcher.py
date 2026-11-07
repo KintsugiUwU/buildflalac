@@ -2,8 +2,9 @@
 
 flalac runs `ffmpeg` by name, so prepending the bundle's `bin` folder to PATH makes it use the
 ffmpeg inside the app, never one from Homebrew or anywhere else. The app starts
-`flalac.macapp:main`; builds made before that module existed (and any build started with
-FLALAC_SMOKE_TEST=1) run the bundle self-test in `smoke_entry.py` instead.
+`flalac.macapp:main`, or `flalac.engine:main` when the executable is named flalac-engine
+(the command-line engine inside the SwiftUI app). Builds made before macapp existed, and any
+build started with FLALAC_SMOKE_TEST=1, run the bundle self-test in `smoke_entry.py` instead.
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ def use_bundled_ffmpeg() -> Path | None:
 
 def main() -> int:
     use_bundled_ffmpeg()
+    if Path(sys.argv[0]).name == "flalac-engine" and os.environ.get("FLALAC_SMOKE_TEST") != "1":
+        from flalac.engine import main as engine_main
+
+        return engine_main()
     if (
         os.environ.get("FLALAC_SMOKE_TEST") == "1"
         or importlib.util.find_spec("flalac.macapp") is None

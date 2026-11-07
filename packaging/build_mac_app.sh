@@ -15,7 +15,10 @@ ROOT=$PWD
 PKG=$ROOT/packaging
 BUILD=$PKG/build
 DIST=$PKG/dist
-APP=$DIST/flalac.app
+# FLALAC_BUILD=engine builds dist/flalac-engine/, the command-line engine the SwiftUI app
+# (macos/) embeds; the default builds the standalone dist/flalac.app.
+KIND=${FLALAC_BUILD:-app}
+if [ "$KIND" = engine ]; then APP=$DIST/flalac-engine; else APP=$DIST/flalac.app; fi
 
 MIN_MACOS=11.0                 # the first macOS for Apple Silicon
 PYINSTALLER_VERSION=6.22.3
@@ -119,12 +122,12 @@ FFMPEG=$FFMPEG_DIR/bin/ffmpeg
 # and never becomes a dependency of flalac. The project .venv is not touched.
 echo "Building flalac.app with PyInstaller $PYINSTALLER_VERSION..."
 rm -rf "$BUILD/pyinstaller" "$APP" "$DIST/flalac"
-FLALAC_FFMPEG_DIR=$FFMPEG_DIR FLALAC_MIN_MACOS=$MIN_MACOS UV_PROJECT_ENVIRONMENT=$BUILD/venv \
+FLALAC_BUILD=$KIND FLALAC_FFMPEG_DIR=$FFMPEG_DIR FLALAC_MIN_MACOS=$MIN_MACOS UV_PROJECT_ENVIRONMENT=$BUILD/venv \
     uv run --project "$ROOT" --locked --no-dev --no-editable --reinstall-package flalac \
     --managed-python --with "pyinstaller==$PYINSTALLER_VERSION" \
     pyinstaller --noconfirm --clean --log-level WARN \
     --distpath "$DIST" --workpath "$BUILD/pyinstaller" "$PKG/flalac.spec"
-rm -rf "$DIST/flalac"  # the plain folder PyInstaller makes next to the .app
+[ "$KIND" = engine ] || rm -rf "$DIST/flalac"  # the plain folder PyInstaller makes next to the .app
 
 # -------------------------------------
 # 3. Check that the app is self-contained
@@ -152,10 +155,16 @@ if [ "$(printf '%s\n%s\n' "$MINOS" "$MIN_MACOS" | sort -V | tail -n 1)" != "$MIN
     echo "A file in the app needs macOS $MINOS, newer than $MIN_MACOS in Info.plist" >&2
     exit 1
 fi
-codesign --verify --deep --strict "$APP"
-
-echo "Running the smoke test inside the app, with PATH=/usr/bin:/bin only..."
-"${CLEAN_ENV[@]}" FLALAC_SMOKE_TEST=1 "$APP/Contents/MacOS/flalac"
+if [ "$KIND" = engine ]; then
+    codesign --verify --strict "$APP/flalac-engine"
+    echo "Running the smoke test inside the engine, with PATH=/usr/bin:/bin only..."
+    "${CLEAN_ENV[@]}" FLALAC_SMOKE_TEST=1 "$APP/flalac-engine"
+    "${CLEAN_ENV[@]}" "$APP/flalac-engine" version
+else
+    codesign --verify --deep --strict "$APP"
+    echo "Running the smoke test inside the app, with PATH=/usr/bin:/bin only..."
+    "${CLEAN_ENV[@]}" FLALAC_SMOKE_TEST=1 "$APP/Contents/MacOS/flalac"
+fi
 
 echo
 echo "Build complete: $APP"
