@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     lazy var controller = SyncController(settings: settings)
     private(set) var mainWindow: NSWindow?
     private(set) var settingsWindow: NSWindow?
+    private(set) var aboutWindow: NSWindow?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.make()
@@ -195,26 +196,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func showAbout(_ sender: Any?) {
-        let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-        let centered = NSMutableParagraphStyle()
-        centered.alignment = .center
-        let credits = NSMutableAttributedString(
-            string: "By KintsugiUwU\n",
-            attributes: [.font: small, .foregroundColor: NSColor.labelColor, .paragraphStyle: centered]
-        )
-        credits.append(NSAttributedString(
-            string: "codeberg.org/KintsugiUwU/flalac",
-            attributes: [.font: small, .link: Updater.releases.deletingLastPathComponent(),
-                         .paragraphStyle: centered]
-        ))
-        if let version = controller.engineVersion {
-            credits.append(NSAttributedString(
-                string: "\nEngine \(version)",
-                attributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor,
-                             .paragraphStyle: centered]
-            ))
+        if aboutWindow == nil {
+            let view = AboutView(version: updater.current, engineVersion: controller.engineVersion)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = ""
+            window.styleMask = [.titled, .closable]
+            window.titlebarAppearsTransparent = true
+            window.isReleasedWhenClosed = false
+            window.center()
+            aboutWindow = window
         }
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        aboutWindow?.makeKeyAndOrderFront(sender)
         NSApp.activate(ignoringOtherApps: true)
     }
 

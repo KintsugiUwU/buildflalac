@@ -47,6 +47,7 @@ final class DevControl: NSObject {
         case "cancel": controller.cancel()
         case "remove": clickAlertButton("Remove") ?? controller.removeHeldDeletes()
         case "keep": clickAlertButton("Keep") ?? controller.keepHeldDeletes()
+        case "about": app.showAbout(nil)
         case "settings": app.showSettings(nil)
         case "close-settings": app.settingsWindow?.performClose(nil)
         case "tab": UserDefaults.standard.set(rest, forKey: "settingsTab")
@@ -57,7 +58,8 @@ final class DevControl: NSObject {
         case "quit": NSApp.terminate(nil)
         case "snapshot":
             let parts = rest.components(separatedBy: " ")
-            let window = parts[0] == "settings" ? app.settingsWindow : app.mainWindow
+            let window = parts[0] == "settings" ? app.settingsWindow
+                : parts[0] == "about" ? app.aboutWindow : app.mainWindow
             if let window { snapshot(window, to: out.appendingPathComponent(parts[1])) }
         case "state": writeState(to: out.appendingPathComponent(rest))
         case "set":
