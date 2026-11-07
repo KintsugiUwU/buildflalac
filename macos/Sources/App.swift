@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let settings = AppSettings()
     let tester = JellyfinTester()
     let noLyrics = NoLyricsList()
+    let updater = Updater()
     lazy var controller = SyncController(settings: settings)
     private(set) var mainWindow: NSWindow?
     private(set) var settingsWindow: NSWindow?
@@ -33,11 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.onFinish = { run in Notifier.syncFinished(run) }
         controller.onNeedsConfirmation = { pending in Notifier.needsConfirmation(pending) }
-        showMainWindow(nil)
-        if !settings.foldersChosen {
-            showSettings(nil)
-        }
+        showMainWindow(nil)  // a first launch sets up the folders right in the main window
         NSApp.activate(ignoringOtherApps: true)
+        updater.check()
         Task {
             await controller.checkEngine()
         }
@@ -88,7 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings: settings,
                 controller: controller,
                 log: controller.log,
-                openSettings: { [weak self] in self?.showSettings(nil) }
+                updater: updater,
+                openSettings: { [weak self] in self?.showSettings(nil) },
+                chooseFolder: { [weak self] kind in self?.chooseFolder(kind) }
             )
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "Flalac"
@@ -180,6 +181,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let window = settingsWindow, window.isVisible {
             panel.beginSheetModal(for: window, completionHandler: apply)
+        } else if let window = mainWindow, window.isVisible {
+            panel.beginSheetModal(for: window, completionHandler: apply)
         } else {
             apply(panel.runModal())
         }
@@ -187,18 +190,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Menu actions
 
+    @objc func checkForUpdates(_ sender: Any?) {
+        updater.check(answerAlways: true)
+    }
+
     @objc func showAbout(_ sender: Any?) {
-        var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+        let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let centered = NSMutableParagraphStyle()
+        centered.alignment = .center
+        let credits = NSMutableAttributedString(
+            string: "By KintsugiUwU\n",
+            attributes: [.font: small, .foregroundColor: NSColor.labelColor, .paragraphStyle: centered]
+        )
+        credits.append(NSAttributedString(
+            string: "codeberg.org/KintsugiUwU/flalac",
+            attributes: [.font: small, .link: Updater.releases.deletingLastPathComponent(),
+                         .paragraphStyle: centered]
+        ))
         if let version = controller.engineVersion {
-            options[.credits] = NSAttributedString(
-                string: "Engine \(version)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                    .foregroundColor: NSColor.secondaryLabelColor,
-                ]
-            )
+            credits.append(NSAttributedString(
+                string: "\nEngine \(version)",
+                attributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor,
+                             .paragraphStyle: centered]
+            ))
         }
-        NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -224,6 +240,7 @@ enum MainMenu {
 
         let app = submenu(of: menu, title: "Flalac")
         app.addItem(withTitle: "About Flalac", action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
+        app.addItem(withTitle: "Check for Updates…", action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "\(SettingsName.title)…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         app.addItem(.separator())

@@ -3,20 +3,33 @@ import SwiftUI
 /// What the last sync did, or why it did not finish.
 struct SummaryView: View {
     let run: LastRun
+    @AppStorage("showDetails") private var showDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             switch run.outcome {
             case .completed:
-                Text(headline)
                 if let summary = run.summary {
-                    if summary.changedNothing {
-                        Text("Everything was already in step.")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(summary.errors > 0 || (summary.library?.failed ?? 0) > 0
+                             ? "Synced, with problems" : "Up to date")
+                            .font(.headline)
+                        Text(headline)
+                            .foregroundColor(.secondary)
+                    }
+                    if summary.changedNothing && summary.notes.isEmpty {
+                        Text("Nothing new: everything was already in step.")
                             .foregroundColor(.secondary)
                     } else {
-                        counts(summary)
+                        Changes(lines: changes(summary) + summary.notes.filter(Self.isDone))
                     }
                     notes(summary)
+                    DisclosureGroup("Details", isExpanded: $showDetails) {
+                        counts(summary)
+                            .padding(.top, 6)
+                    }
+                } else {
+                    Text(headline)
                 }
             case .failed:
                 Warning(text: "Last sync failed: \(Format.date(run.finished))")
@@ -35,11 +48,40 @@ struct SummaryView: View {
     }
 
     private var headline: String {
-        let date = Format.date(run.finished)
-        guard let seconds = run.summary?.seconds, seconds > 0 else {
-            return "Last sync: \(date)"
+        // "Today at 16:10" reads "today at 16:10" in the middle of a sentence
+        var date = Format.date(run.finished)
+        if date.hasPrefix("Today") || date.hasPrefix("Yesterday") {
+            date = date.prefix(1).lowercased() + date.dropFirst()
         }
-        return "Last sync: \(date), took \(Format.duration(seconds))"
+        guard let seconds = run.summary?.seconds, seconds > 0 else {
+            return "Last synced \(date)"
+        }
+        return "Last synced \(date) · took \(Format.duration(seconds))"
+    }
+
+    /// What changed, one plain sentence per kind of change; nothing is said about zeros.
+    private func changes(_ summary: SyncSummary) -> [String] {
+        func songs(_ count: Int, _ what: String) -> String? {
+            count == 0 ? nil : "\(count == 1 ? "1 song" : "\(Format.count(count)) songs") \(what)"
+        }
+        var lines = [
+            songs(summary.converted, "converted"),
+            songs(summary.retagged, "updated with new tags"),
+            songs(summary.renamed, "renamed"),
+            songs(summary.removed, "removed from the ALAC folder"),
+        ].compactMap { $0 }
+        if let library = summary.library {
+            let app = library.app.isEmpty ? "the library" : library.app
+            lines += [
+                songs(library.added, "added to \(app)"),
+                songs(library.removed, "removed from \(app)"),
+                songs(library.moved, "re-linked in \(app)"),
+                songs(library.refreshed, "refreshed in \(app)"),
+                library.plays == 0 ? nil
+                    : "\(Format.count(library.plays)) play \(library.plays == 1 ? "count" : "counts") updated in \(app)",
+            ].compactMap { $0 }
+        }
+        return lines
     }
 
     private func counts(_ summary: SyncSummary) -> some View {
@@ -72,7 +114,7 @@ struct SummaryView: View {
 
     @ViewBuilder private func notes(_ summary: SyncSummary) -> some View {
         let warnings = problems(summary)
-        let lines = remarks(summary) + summary.notes
+        let lines = remarks(summary) + summary.notes.filter { !Self.isDone($0) }
         if !warnings.isEmpty || !lines.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(warnings, id: \.self) { Warning(text: $0) }
@@ -83,6 +125,11 @@ struct SummaryView: View {
                 }
             }
         }
+    }
+
+    /// Engine notes like "2 play counts updated in Jellyfin" read as done changes.
+    static func isDone(_ note: String) -> Bool {
+        note.contains(" updated in ")
     }
 
     private func problems(_ summary: SyncSummary) -> [String] {
@@ -142,3 +189,23 @@ private struct Counts: View {
         }
     }
 }
+
+/// Done changes as a short checklist, the way installers and First Aid report what they did.
+private struct Changes: View {
+    let lines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(lines, id: \.self) { line in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.callout.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Text(line)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+

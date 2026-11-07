@@ -73,7 +73,7 @@ cat >"$APP/Contents/Info.plist" <<EOF
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
-    <key>NSHumanReadableCopyright</key><string>GPL-3.0-or-later</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 KintsugiUwU. GPL-3.0-or-later.</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsSuddenTermination</key><false/>
