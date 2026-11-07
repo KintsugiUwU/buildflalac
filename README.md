@@ -92,6 +92,14 @@ SOURCE_DIR=./in TARGET_DIR=./out CONFIG_DIR=./config uv run flalac
 
 Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md).
 
+## Mac app
+
+`packaging/build_mac_app.sh` builds `flalac.app` for Apple Silicon (macOS 11+): Python, flalac
+and FFmpeg inside, nothing to install. Put it on the music drive next to `ALAC/` and
+double-click it: it converts what changed in the FLAC folder onto the drive (state in
+`.flalac/` on the drive), brings the iTunes or Music library in step and syncs play counts with
+Jellyfin. See `packaging/README.md`.
+
 ## Macs
 
 The **Mac** page has a small AppleScript (iTunes on Mac OS X 10.4 and later, and the Music app)
