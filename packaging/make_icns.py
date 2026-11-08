@@ -11,6 +11,7 @@ Needs Pillow and ImageMagick (`magick`) to render the SVG:
 
     python3 packaging/make_icns.py
 """
+
 import io
 import struct
 import subprocess
@@ -23,19 +24,31 @@ ROOT = Path(__file__).resolve().parent.parent
 SVG = ROOT / "src/flalac/static/icon.svg"
 OUT = ROOT / "packaging/flalac.icns"
 
-SS = 4                     # supersampling factor
-N = 1024 * SS              # canvas
-BODY = 824 * SS            # rounded square
-OFF = 100 * SS             # its margin
+SS = 4  # supersampling factor
+N = 1024 * SS  # canvas
+BODY = 824 * SS  # rounded square
+OFF = 100 * SS  # its margin
 RADIUS = round(185.4 * SS)
-ART = 0.78                 # iPod height as a share of the body
+ART = 0.78  # iPod height as a share of the body
 
 
 def render_svg() -> Image.Image:
     with tempfile.TemporaryDirectory() as tmp:
         png = Path(tmp) / "art.png"
-        subprocess.run(["magick", "-background", "none", "-density", "3072", str(SVG),
-                        "-resize", f"{N}x{N}", str(png)], check=True)
+        subprocess.run(
+            [
+                "magick",
+                "-background",
+                "none",
+                "-density",
+                "3072",
+                str(SVG),
+                "-resize",
+                f"{N}x{N}",
+                str(png),
+            ],
+            check=True,
+        )
         art = Image.open(png).convert("RGBA")
         art.load()
     return art.crop(art.getchannel("A").getbbox())
@@ -74,10 +87,19 @@ def write_icns(img: Image.Image, path: Path) -> None:
         img.resize((px, px), Image.LANCZOS).save(buf, "PNG", optimize=True)
         return buf.getvalue()
 
-    types = [("ic11", 32), ("ic12", 64), ("ic07", 128), ("ic13", 256), ("ic08", 256),
-             ("ic14", 512), ("ic09", 512), ("ic10", 1024)]
-    chunks = b"".join(t.encode() + struct.pack(">I", 8 + len(d)) + d
-                      for t, d in ((t, png(px)) for t, px in types))
+    types = [
+        ("ic11", 32),
+        ("ic12", 64),
+        ("ic07", 128),
+        ("ic13", 256),
+        ("ic08", 256),
+        ("ic14", 512),
+        ("ic09", 512),
+        ("ic10", 1024),
+    ]
+    chunks = b"".join(
+        t.encode() + struct.pack(">I", 8 + len(d)) + d for t, d in ((t, png(px)) for t, px in types)
+    )
     path.write_bytes(b"icns" + struct.pack(">I", 8 + len(chunks)) + chunks)
 
 
