@@ -26,6 +26,7 @@ jobs:
         if: failure()
         run: |
           echo "errors: $(grep -c ': error:' build.log)"
-          grep -E '^/.*:[0-9]+:[0-9]+: error:' build.log \
+          grep -E ':[0-9]+:[0-9]+: error:' build.log \
             | sed -E 's#^'"$PWD"'/##; s#^([^:]+):([0-9]+):([0-9]+): error: (.*)$#::error file=\1,line=\2,col=\3::\4#' \
             | sort -u | head -50 || true
+          grep -E '^(error|<unknown>):' build.log | head -5 | sed 's/^/::error::/' || true
