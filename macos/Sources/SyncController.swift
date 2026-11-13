@@ -81,7 +81,7 @@ final class SyncController: ObservableObject {
     }
 
     func sync() {
-        start(confirmDeletes: false)
+        start(confirmDeletes: nil)
     }
 
     /// Stops the engine: SIGTERM, then SIGKILL if it has not stopped after a while.
@@ -102,10 +102,12 @@ final class SyncController: ObservableObject {
         cancel()
     }
 
-    /// The user confirmed: run the sync again, now allowed to delete.
+    /// The user confirmed: run the sync again, now allowed to delete the songs they were
+    /// told about (exactly that many).
     func removeHeldDeletes() {
+        guard let pending = pendingDeletes else { return }
         pendingDeletes = nil
-        start(confirmDeletes: true)
+        start(confirmDeletes: pending.count)
     }
 
     /// The user kept the songs: nothing more to do, the summary says they are still there.
@@ -116,7 +118,8 @@ final class SyncController: ObservableObject {
 
     /// Asks the engine for its version, to find a missing or broken engine early.
     func checkEngine() async {
-        let run = await Engine.collect(EngineCommand.version, timeout: 30)
+        // A PyInstaller engine unpacks itself on its first start, which can be slow
+        let run = await Engine.collect(EngineCommand.version, timeout: 120)
         if let problem = run.launchError {
             engineProblem = problem
             return
@@ -128,6 +131,8 @@ final class SyncController: ObservableObject {
             engineProblem = nil
         } else if let message = run.messages.compactMap(\.errorText).first {
             engineProblem = message
+        } else if run.timedOut {
+            engineProblem = "The engine took too long to start. Try a sync; this warning goes away once one works."
         } else {
             engineProblem = run.exit.map { $0.succeeded ? "The engine did not say its version." : $0.explanation }
                 ?? "The engine did not answer."
@@ -136,14 +141,22 @@ final class SyncController: ObservableObject {
 
     // MARK: - Running
 
-    private func start(confirmDeletes: Bool) {
+    private func start(confirmDeletes: Int?) {
         guard activity == .idle, settings.foldersChosen else { return }
+        if let missing = settings.foldersMissing {
+            // The menu item checks this too; a drive can go away in between
+            log.append(missing)
+            return
+        }
+        if confirmDeletes == nil {
+            pendingDeletes = nil  // a new sync asks again about whatever it holds back
+        }
         activity = .running
         cancelRequested = false
         stage = nil
         conversion = nil
         stageMessage = nil
-        if confirmDeletes {
+        if confirmDeletes != nil {
             log.append("")
             log.append("Removing the songs that are gone from the FLAC folder.")
         } else {
@@ -155,16 +168,20 @@ final class SyncController: ObservableObject {
         }
     }
 
-    private func run(confirmDeletes: Bool) async {
+    private func run(confirmDeletes: Int?) async {
         let account = settings.jellyfinAccount
         var key: String?
-        if account != nil {
+        if let account {
             stageMessage = "Reading the Jellyfin key from the Keychain…"
-            key = await settings.currentKey()
+            switch await settings.currentKey() {
+            case .key(let found):
+                key = found
+            case .missing:
+                log.append("Play counts are not synced: no Jellyfin API key is saved for \(account.user).")
+            case .failed(let problem):
+                log.append("Play counts are not synced: the Jellyfin API key could not be read. \(problem)")
+            }
             stageMessage = nil
-        }
-        if let account, key == nil {
-            log.append("Play counts are not synced: no Jellyfin API key is saved for \(account.user).")
         }
         let request = settings.syncRequest(jellyfin: key == nil ? nil : account, confirmDeletes: confirmDeletes)
         guard !cancelRequested else {
@@ -245,15 +262,20 @@ final class SyncController: ObservableObject {
             log.append("Cancelled.")
             finish(LastRun(finished: Date(), outcome: .cancelled))
         } else if let error = report.error {
-            finish(LastRun(finished: Date(), outcome: .failed, message: error))
+            // The library step can fail after songs were converted: keep what was done
+            finish(LastRun(finished: Date(), outcome: .failed, message: error, summary: report.summary))
         } else if !exit.succeeded {
             log.append(exit.explanation)
             finish(LastRun(finished: Date(), outcome: .failed, message: exit.explanation + " Details are in the log."))
         } else if let summary = report.summary {
-            let total = request.confirmDeletes ? (heldSummary?.merged(with: summary) ?? summary) : summary
+            engineProblem = nil  // a sync just worked, whatever the start-up check said
+            let confirming = request.confirmDeletes != nil
+            let total = confirming ? (heldSummary?.merged(with: summary) ?? summary) : summary
             heldSummary = nil
-            if report.heldDeletes > 0, !request.confirmDeletes {
-                heldSummary = summary
+            // Also after a confirmation: when more songs vanished than the user agreed to,
+            // the engine held them all again and asks with the new number
+            if report.heldDeletes > 0 {
+                heldSummary = total
                 pendingDeletes = PendingDeletes(count: report.heldDeletes, libraryName: request.library.appName)
             }
             finish(LastRun(finished: Date(), outcome: .completed, summary: total))
@@ -278,6 +300,9 @@ final class SyncController: ObservableObject {
         let waiters = stopWaiters
         stopWaiters = []
         waiters.forEach { $0() }
+        if run.outcome != .completed {
+            pendingDeletes = nil  // a failed or cancelled run is reported as such
+        }
         if let pendingDeletes {
             onNeedsConfirmation?(pendingDeletes)
         } else {
@@ -302,8 +327,15 @@ final class JellyfinTester: ObservableObject {
         guard state != .testing, let account = settings.jellyfinAccount else { return }
         state = .testing
         Task {
-            guard let key = await settings.currentKey() else {
+            let key: String
+            switch await settings.currentKey() {
+            case .key(let found):
+                key = found
+            case .missing:
                 state = .failed("Enter the API key.")
+                return
+            case .failed(let problem):
+                state = .failed(problem)
                 return
             }
             let run = await Engine.collect(EngineCommand.testJellyfin(account), key: key)
@@ -331,6 +363,9 @@ final class JellyfinTester: ObservableObject {
         }
         if let message = run.messages.compactMap(\.errorText).first {
             return .failed(message)
+        }
+        if run.timedOut {
+            return .failed("Jellyfin did not answer in time. Check the address.")
         }
         if let exit = run.exit, !exit.succeeded {
             return .failed(exit.explanation)

@@ -99,7 +99,9 @@ struct SyncRequest: Equatable, Sendable {
     var lyricsStyle: LyricsStyle
     var maxBitDepth = BitDepthLimit.sixteen
     var maxSampleRate = SampleRateLimit.cd
-    var confirmDeletes = false
+    /// The number of held deletions the user agreed to remove; nil when none. The engine
+    /// holds them again if a different number would go (more songs vanished meanwhile).
+    var confirmDeletes: Int?
 
     var arguments: [String] {
         var arguments = ["sync", "--source", source, "--target", target]
@@ -117,8 +119,8 @@ struct SyncRequest: Equatable, Sendable {
         }
         arguments += ["--max-bit-depth", String(maxBitDepth.rawValue)]
         arguments += ["--max-sample-rate", String(maxSampleRate.rawValue)]
-        if confirmDeletes {
-            arguments.append("--confirm-deletes")
+        if let confirmDeletes {
+            arguments += ["--confirm-deletes", String(confirmDeletes)]
         }
         return arguments
     }

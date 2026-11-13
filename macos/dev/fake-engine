@@ -46,7 +46,9 @@ while [ $# -gt 0 ]; do
         --lyrics-style) style=$2; shift 2 ;;
         --max-bit-depth) depth=$2; shift 2 ;;
         --max-sample-rate) rate=$2; shift 2 ;;
-        --confirm-deletes) confirm=1; shift ;;
+        --confirm-deletes)  # optionally followed by the number the user agreed to
+            confirm=1; shift
+            case ${1:-x} in *[!0-9]*) ;; *) shift ;; esac ;;
         *) fail "Unknown argument: $(json "$1")" 2 ;;
     esac
 done

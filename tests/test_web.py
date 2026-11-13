@@ -55,3 +55,16 @@ def test_mac_page_script_and_sync(workspace, make_engine):
     assert answer.status_code == 200 and answer.text == "\n"
     assert client.post("/api/mac-sync", content="track\tP1\t0\t/x").status_code == 400
     assert "MacBook" in client.get("/mac").text
+
+
+def test_cross_site_posts_are_refused(workspace, make_engine):
+    engine = make_engine()
+    client = TestClient(create_app(engine))
+    evil = client.post("/deletes/confirm", headers={"origin": "https://evil.example"})
+    assert evil.status_code == 403
+    assert engine._confirm_deletes is False
+    own = client.post(
+        "/deletes/confirm", data={"count": "4"}, headers={"origin": "http://testserver"}
+    )
+    assert own.status_code in (200, 303)
+    assert (engine._confirm_deletes, engine._confirm_count) == (True, 4)

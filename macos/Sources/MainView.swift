@@ -43,14 +43,7 @@ struct MainView: View {
 
     private var missing: String? {
         _ = volumesChanged
-        if !Self.isFolder(settings.flacFolder) { return "The FLAC folder is not reachable. Connect the share." }
-        if !Self.isFolder(settings.alacFolder) { return "The ALAC folder is not reachable. Connect the drive." }
-        return nil
-    }
-
-    private static func isFolder(_ path: String) -> Bool {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        return settings.foldersMissing
     }
 
     @ViewBuilder private var configured: some View {

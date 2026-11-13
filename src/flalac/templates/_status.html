@@ -20,6 +20,7 @@
   <form class="held" method="post" action="/deletes/confirm" hx-post="/deletes/confirm" hx-target="#status" hx-swap="outerHTML">
     <p><span class="state waiting">{{ s.held_deletes }} files</span> disappeared from the source at once.
       Their copies are kept until you confirm.</p>
+    <input type="hidden" name="count" value="{{ s.held_deletes }}">
     <button type="submit">Delete the copies</button>
   </form>
   {% endif %}

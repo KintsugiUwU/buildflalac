@@ -26,13 +26,17 @@ final class Updater: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let current = current
         URLSession.shared.dataTask(with: request) { data, response, _ in
-            // Any HTTP answer means Codeberg was reached; 404 just means no release yet.
+            // 200 is an answer, and so is 404 (no release yet). Anything else (a 5xx, a rate
+            // limit, no connection) says nothing about which version is newest.
             let status = (response as? HTTPURLResponse)?.statusCode
+            let answered = status == 200 || status == 404
             let release = status == 200 ? Self.newer(than: current, in: data) : nil
             Task { @MainActor in
-                self.available = release
+                if answered {
+                    self.available = release  // a failed check keeps what an earlier one found
+                }
                 if answerAlways {
-                    self.tell(release, reached: status != nil)
+                    self.tell(release, answered: answered, status: status)
                 }
             }
         }.resume()
@@ -42,7 +46,7 @@ final class Updater: ObservableObject {
         NSWorkspace.shared.open(available?.page ?? Self.releases)
     }
 
-    private func tell(_ release: Release?, reached: Bool) {
+    private func tell(_ release: Release?, answered: Bool, status: Int?) {
         let alert = NSAlert()
         if let release {
             alert.messageText = "Flalac \(release.version) is available."
@@ -54,10 +58,15 @@ final class Updater: ObservableObject {
             }
             return
         }
-        alert.messageText = reached
-            ? "Flalac \(current) is the newest version."
-            : "Codeberg could not be reached."
-        alert.informativeText = reached ? "" : "Check the connection and try again."
+        if answered {
+            alert.messageText = "Flalac \(current) is the newest version."
+        } else if let status {
+            alert.messageText = "Codeberg did not answer the update check (HTTP \(status))."
+            alert.informativeText = "Try again later."
+        } else {
+            alert.messageText = "Codeberg could not be reached."
+            alert.informativeText = "Check the connection and try again."
+        }
         alert.runModal()
     }
 
@@ -70,14 +79,19 @@ final class Updater: ObservableObject {
             json["draft"] as? Bool != true,
             json["prerelease"] as? Bool != true
         else { return nil }
-        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        // "v0.5.0", "flalac-0.5.0" and "0.5.0" all name version 0.5.0
+        guard let start = tag.firstIndex(where: \.isNumber) else { return nil }
+        let version = String(tag[start...])
         let page = (json["html_url"] as? String).flatMap(URL.init(string:)) ?? releases
         return isNewer(version, than: current) ? Release(version: version, page: page) : nil
     }
 
-    /// "0.10.1" is newer than "0.9.3": numbers compared part by part.
+    /// "0.10.1" is newer than "0.9.3": numbers compared part by part. Each part counts by its
+    /// leading digits, so "1-rc1" is 1.
     nonisolated static func isNewer(_ candidate: String, than current: String) -> Bool {
-        let parts = { (text: String) in text.split(separator: ".").map { Int($0) ?? 0 } }
+        let parts = { (text: String) in
+            text.split(separator: ".").map { Int($0.prefix(while: \.isNumber)) ?? 0 }
+        }
         let a = parts(candidate)
         let b = parts(current)
         for index in 0..<max(a.count, b.count) {

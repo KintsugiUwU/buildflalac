@@ -32,6 +32,7 @@ SCAN_LOOKUPS = 16  # file lookups in flight at once while scanning (network roun
 LRCLIB_RULES = "2"  # bump when lyrics.lookup() finds more, so earlier misses are asked again
 LYRICS_RETRY_SECONDS = 3600  # ask LRCLIB again at most once an hour after it was unreachable
 LRCLIB_PAUSE_SECONDS = 600  # after a failure, skip LRCLIB this long
+LRCLIB_MISS_SECONDS = 30 * 86400  # LRCLIB had nothing: ask again after this long (it grows)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,7 @@ class Engine:
         }
         self._held: list[str] = []
         self._confirm_deletes = False
+        self._confirm_count: int | None = None
         self._skipped: set[str] = set()
         self._lrclib_paused_until = 0.0
 
@@ -116,6 +118,32 @@ class Engine:
         """The lyrics file flalac keeps next to a target: .lrc for synced, else .txt."""
         suffix = ".lrc" if source in lyrics.SYNCED_SOURCES else ".txt"
         return (self.s.target / (target_rel or "")).with_suffix(suffix)
+
+    def _sidecars(self, target_rel: str | None) -> list[Path]:
+        """The lyrics files (.lrc, .txt) that exist next to a target."""
+        if not target_rel:
+            return []
+        base = self.s.target / target_rel
+        return [p for p in (base.with_suffix(".lrc"), base.with_suffix(".txt")) if p.is_file()]
+
+    def _edited_file(
+        self, target_rel: str | None, source: str | None, unlike: str | None = None
+    ) -> Path | None:
+        """The lyrics file of a locked song: the kind last recorded, else the other. With
+        `unlike` (the hash flalac wrote), a file that differs from it comes first: that is the
+        one the user just added or changed."""
+        if not target_rel:
+            return None
+        side = self._sidecar(target_rel, source)
+        other = side.with_suffix(".txt" if side.suffix == ".lrc" else ".lrc")
+        files = [p for p in (side, other) if p.is_file()]
+        if unlike is not None:
+            files.sort(key=lambda p: self._file_hash(p) == unlike)
+        return files[0] if files else None
+
+    @staticmethod
+    def _file_hash(path: Path) -> str:
+        return text_hash(path.read_text(encoding="utf-8", errors="replace").strip())
 
     def remove_stale_temp_files(self) -> int:
         """Temp files left by a crash or power cut; only flalac's own, never anything else."""
@@ -202,6 +230,7 @@ class Engine:
                 restyle
                 or self._lyrics_dirty(sf, track)
                 or (track.lyrics_retry and now - track.updated > LYRICS_RETRY_SECONDS)
+                or self._ask_lrclib_again(track, now)
             ):
                 plan.retag.append(sf)
         gone = {rel: t for rel, t in known.items() if rel not in files}
@@ -224,7 +253,8 @@ class Engine:
         moved = {old for old, _ in plan.moves}
         deletes = [rel for rel in gone if rel not in moved]
         limit = max(3, len(known) * self.s.delete_guard_percent / 100)
-        if len(deletes) > limit and not self._confirm_deletes:
+        confirmed = self._confirm_deletes and self._confirm_count in (None, len(deletes))
+        if len(deletes) > limit and not confirmed:
             plan.held_deletes = True
             self._held = deletes
         else:
@@ -246,17 +276,32 @@ class Engine:
     def _target_ok(self, track: Track) -> bool:
         return bool(track.target_rel) and (self.s.target / track.target_rel).is_file()
 
+    def _ask_lrclib_again(self, track: Track, now: float) -> bool:
+        """LRCLIB had no lyrics a long time ago; it may have them by now."""
+        return (
+            self.s.lyrics == "lrclib"
+            and track.lyrics_source == "none"
+            and not track.lyrics_locked
+            and now - track.updated > LRCLIB_MISS_SECONDS
+            and track.rel not in self._no_lyrics()
+        )
+
     def _lyrics_dirty(self, sf: SourceFile, track: Track) -> bool:
-        """Sidecars changed next to the source, or someone edited the target's lyrics file."""
+        """Sidecars changed next to the source, or someone edited, added or removed a lyrics
+        file next to the target."""
         if not self.s.lyrics_files:
             return sf.side_mtime > track.updated
-        side = self._sidecar(track.target_rel, track.lyrics_source)
-        if side.is_file():
-            current = text_hash(side.read_text(encoding="utf-8", errors="replace").strip())
-            if current != track.lyrics_hash:
+        if track.lyrics_locked:
+            sides = [p for p in [self._edited_file(track.target_rel, track.lyrics_source)] if p]
+        else:
+            sides = self._sidecars(track.target_rel)
+            if not sides and track.lyrics_hash:
+                return True  # our lyrics file disappeared; write it again
+        for side in sides:
+            # A file not modified since the song was last saved still holds what was recorded;
+            # comparing times first saves reading every lyrics file on every scan.
+            if side.stat().st_mtime > track.updated and self._file_hash(side) != track.lyrics_hash:
                 return True
-        elif track.lyrics_hash and not track.lyrics_locked:
-            return True  # our lyrics file disappeared; write it again
         return sf.side_mtime > track.updated
 
     # ---------------------------------------------------------------- applying
@@ -268,29 +313,40 @@ class Engine:
             self._apply_no_lyrics_changes()
             try:
                 plan = self.scan()
+                self.status["held_deletes"] = len(self._held) if plan.held_deletes else 0
+                if plan.held_deletes:
+                    self.db.event(
+                        "deletes-held", None, f"{len(self._held)} deletions wait for confirmation"
+                    )
+                if self.s.dry_run:
+                    self._report_dry_run(plan)
+                elif not plan.empty:
+                    self._apply(plan)
             except SourceMissingError as error:
                 self.db.event("source-missing", None, str(error))
                 self.status.update(phase="paused", current=str(error))
                 return None
-            self.status["held_deletes"] = len(self._held) if plan.held_deletes else 0
-            if plan.held_deletes:
-                self.db.event(
-                    "deletes-held", None, f"{len(self._held)} deletions wait for confirmation"
-                )
-            if self.s.dry_run:
-                self._report_dry_run(plan)
-            elif not plan.empty:
-                self._apply(plan)
+            except Exception as error:
+                # Anything else (a permission error, a share that went away mid-scan) pauses this
+                # pass too: the caller tries again later instead of stopping for good.
+                message = f"pass failed: {type(error).__name__}: {error}"[:500]
+                self.db.event("error", None, message)
+                self.status.update(phase="paused", current=message)
+                return None
             if not self.s.dry_run:
                 self.db.set_meta("applied_lyrics_style", self.lyrics_style)
-            self._confirm_deletes = False
+            self._confirm_deletes, self._confirm_count = False, None
             self.status.update(phase="idle", current="", last_pass=self.clock())
             return plan
         finally:
             self.lock.release()
 
-    def confirm_deletes(self) -> None:
+    def confirm_deletes(self, count: int | None = None) -> None:
+        """Let the held deletions go ahead on the next pass. With `count`, only if that pass
+        would delete exactly that many songs (the number the person saw); otherwise they are
+        held again."""
         self._confirm_deletes = True
+        self._confirm_count = count
 
     def _report_dry_run(self, plan: Plan) -> None:
         for sf in plan.encode:
@@ -331,13 +387,21 @@ class Engine:
             self.status["done"] += 1
 
     def _lyrics_for(
-        self, sf: SourceFile, tags: media.Tags, seconds: float, track: Track | None
+        self,
+        sf: SourceFile,
+        tags: media.Tags,
+        seconds: float,
+        target_rel: str,
+        locked: bool,
+        track: Track | None,
     ) -> lyrics.Lyrics:
         if sf.rel in self._no_lyrics():
             return lyrics.Lyrics("", "none")
-        if track and track.lyrics_locked and track.target_rel:
-            side = self._sidecar(track.target_rel, track.lyrics_source)
-            if side.is_file():
+        if locked:
+            source, written = (track.lyrics_source, track.lyrics_hash) if track else (None, None)
+            newly = not (track and track.lyrics_locked)
+            side = self._edited_file(target_rel, source, written if newly else None)
+            if side is not None:
                 text = side.read_text(encoding="utf-8", errors="replace").strip()
                 return lyrics.Lyrics(text, "edited-synced" if side.suffix == ".lrc" else "edited")
         return lyrics.choose(sf.path, tags, seconds, self.s.lyrics, self.lyrics_style, self._online)
@@ -365,8 +429,14 @@ class Engine:
         cached = self.db.cached_lyrics(key)
         if cached is not None and cached.startswith("{"):
             data = json.loads(cached)
-            if "plain" in data:  # entries from before synced support are asked again
-                return lyrics.Answer(data["plain"], data["synced"], bool(data["instrumental"]))
+            answer = (
+                lyrics.Answer(data["plain"], data["synced"], bool(data["instrumental"]))
+                if "plain" in data  # entries from before synced support are asked again
+                else None
+            )
+            fetched = self.db.cached_lyrics_time(key)
+            if answer and (answer.found or self.clock() - fetched < LRCLIB_MISS_SECONDS):
+                return answer
         if self.clock() < self._lrclib_paused_until:
             return None  # LRCLIB failed recently; don't make every song wait for it
         try:
@@ -389,21 +459,34 @@ class Engine:
         self.db.cache_lyrics(key, json.dumps(data))
         return answer
 
-    def _write_sidecar(self, target_rel: str, chosen: lyrics.Lyrics, locked: bool) -> str | None:
-        """Write the lyrics file next to the target (.txt or .lrc) and drop the other kind."""
-        if locked:
-            return text_hash(chosen.text.strip())
+    def _write_sidecar(
+        self, target_rel: str, chosen: lyrics.Lyrics, locked: bool, written: str | None
+    ) -> str | None:
+        """Write the lyrics file next to the target (.txt or .lrc) and drop the other kind.
+        `written` is the hash of what flalac wrote last time: only a file still holding exactly
+        that is flalac's to remove; anything else next to the target is the user's."""
+
+        def remove_ours(path: Path) -> None:
+            if written and path.is_file() and self._file_hash(path) == written:
+                path.unlink()
+
         if not self.s.lyrics_files:
             return text_hash(chosen.text.strip()) if chosen.text else None
+        if locked:
+            # The user's file stays as it is; a stale one flalac wrote of the other kind goes.
+            edited = self._edited_file(target_rel, chosen.source)
+            for side in self._sidecars(target_rel):
+                if side != edited:
+                    remove_ours(side)
+            return text_hash(chosen.text.strip())
         side = self._sidecar(target_rel, chosen.source)
-        other = side.with_suffix(".txt" if side.suffix == ".lrc" else ".lrc")
-        other.unlink(missing_ok=True)
+        remove_ours(side.with_suffix(".txt" if side.suffix == ".lrc" else ".lrc"))
         if chosen.text:
             tmp = encode.temp_path(side)
             tmp.write_text(chosen.text + "\n", encoding="utf-8")
             os.replace(tmp, side)
             return text_hash(chosen.text.strip())
-        side.unlink(missing_ok=True)
+        remove_ours(side)
         return None
 
     def _remove_lyrics_files(self) -> None:
@@ -421,17 +504,15 @@ class Engine:
                     removed += 1
         self.db.event("lyrics-files-removed", None, f"{removed} lyrics files removed")
 
-    def _detect_edit(self, track: Track | None) -> bool:
-        """True when the user changed the lyrics file we wrote last time."""
+    def _detect_edit(self, track: Track | None, target_rel: str) -> bool:
+        """True when the lyrics file next to the target is the user's: flalac's file changed
+        by hand, or a file the user added (also where flalac found no lyrics)."""
+        if track and track.lyrics_locked:
+            return True
         if not self.s.lyrics_files:
-            return bool(track and track.lyrics_locked)
-        if not track or not track.target_rel or not track.lyrics_hash:
-            return bool(track and track.lyrics_locked)
-        side = self._sidecar(track.target_rel, track.lyrics_source)
-        if not side.is_file():
-            return bool(track.lyrics_locked)
-        current = text_hash(side.read_text(encoding="utf-8", errors="replace").strip())
-        return bool(track.lyrics_locked) or current != track.lyrics_hash
+            return False
+        written = track.lyrics_hash if track else None
+        return any(self._file_hash(side) != written for side in self._sidecars(target_rel))
 
     def _encode(self, sf: SourceFile) -> None:
         audio = media.facts(sf.path)
@@ -444,10 +525,8 @@ class Engine:
             raise FileExistsError(f"{target_rel} already exists and was not made by flalac")
         identity = media.audio_identity(sf.path, audio)
         tags = media.read_tags(sf.path)
-        locked = self._detect_edit(previous)
-        if previous:
-            previous.lyrics_locked = int(locked)
-        chosen = self._lyrics_for(sf, tags, audio.seconds, previous)
+        locked = self._detect_edit(previous, target_rel)
+        chosen = self._lyrics_for(sf, tags, audio.seconds, target_rel, locked, previous)
         self.status["current"] = sf.rel
         tmp = encode.temp_path(target)
         try:
@@ -457,8 +536,11 @@ class Engine:
         finally:
             tmp.unlink(missing_ok=True)
         if previous and previous.target_rel and previous.target_rel != target_rel:
-            self._remove_target(previous.target_rel)  # output format changed
-        lyrics_hash = self._write_sidecar(target_rel, chosen, locked)
+            # Output format changed. The lyrics files next to it are the same ones the new
+            # target uses (same name, other extension), so they stay.
+            self._remove_target(previous.target_rel, keep_lyrics=True)
+        written = previous.lyrics_hash if previous else None
+        lyrics_hash = self._write_sidecar(target_rel, chosen, locked, written)
         self.db.save(
             Track(
                 sf.rel,
@@ -486,11 +568,11 @@ class Engine:
             return self._encode(sf)
         target = self.s.target / track.target_rel
         tags = media.read_tags(sf.path)
-        locked = self._detect_edit(track)
-        track.lyrics_locked = int(locked)
-        chosen = self._lyrics_for(sf, tags, audio.seconds, track)
+        locked = self._detect_edit(track, track.target_rel)
+        chosen = self._lyrics_for(sf, tags, audio.seconds, track.target_rel, locked, track)
         media.write_tags(target, tags, chosen.text)
-        track.lyrics_hash = self._write_sidecar(track.target_rel, chosen, locked)
+        track.lyrics_hash = self._write_sidecar(track.target_rel, chosen, locked, track.lyrics_hash)
+        track.lyrics_locked = int(locked)
         track.size, track.mtime, track.tag_hash = sf.size, sf.mtime, tags.fingerprint()
         track.lyrics_source, track.status, track.error = chosen.source, "synced", None
         track.lyrics_retry = int(chosen.retry)
@@ -531,11 +613,12 @@ class Engine:
         self.db.delete(rel)
         self.db.event("deleted", rel)
 
-    def _remove_target(self, target_rel: str) -> None:
+    def _remove_target(self, target_rel: str, keep_lyrics: bool = False) -> None:
         target = self.s.target / target_rel
         target.unlink(missing_ok=True)
-        target.with_suffix(".txt").unlink(missing_ok=True)
-        target.with_suffix(".lrc").unlink(missing_ok=True)
+        if not keep_lyrics:
+            target.with_suffix(".txt").unlink(missing_ok=True)
+            target.with_suffix(".lrc").unlink(missing_ok=True)
         self._prune(target.parent)
 
     def _prune(self, folder: Path) -> None:

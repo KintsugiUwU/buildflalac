@@ -55,8 +55,14 @@ def check(settings: Settings) -> None:
         raise OnceError("ffmpeg was not found")
     if not settings.source.is_dir():
         raise OnceError(f"The FLAC folder {settings.source} is not reachable. Connect the share.")
-    settings.target.mkdir(parents=True, exist_ok=True)
-    settings.config.mkdir(parents=True, exist_ok=True)
+    for label, folder in (("copy", settings.target), ("state", settings.config)):
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise OnceError(
+                f"The {label} folder {folder} can't be created ({error.strerror}). "
+                "Connect the drive."
+            ) from error
 
 
 def run(
@@ -76,7 +82,7 @@ def run(
         plan = _pass(engine, progress, every)
         held = len(engine._held) if plan.held_deletes else 0
         if held and confirm_deletes(held):
-            engine.confirm_deletes()
+            engine.confirm_deletes(held)  # exactly these; more vanishing meanwhile are held
             again = _pass(engine, progress, every)
             plan.deletes.extend(again.deletes)
             held = 0

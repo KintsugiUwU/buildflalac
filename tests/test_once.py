@@ -53,3 +53,13 @@ def test_large_removal_waits_for_confirmation(tmp_path):
 def test_unreachable_source_is_explained(tmp_path):
     with pytest.raises(OnceError, match="Connect the share"):
         run(settings(tmp_path))
+
+
+def test_unreachable_target_is_explained(tmp_path):
+    s = settings(tmp_path)
+    s.source.mkdir(parents=True)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a folder")
+    s = dataclasses.replace(s, target=blocker / "ALAC")
+    with pytest.raises(OnceError, match="Connect the drive"):
+        run(s)
