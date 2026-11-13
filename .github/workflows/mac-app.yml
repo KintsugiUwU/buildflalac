@@ -1,0 +1,51 @@
+# Builds Flalac.app (SwiftUI front end with the engine and ffmpeg inside) on an Apple Silicon
+# runner. The GitHub repository is only a build mirror; the project lives on Codeberg.
+name: Mac app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  app:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile the Swift app (fails fast on Swift errors)
+        run: |
+          set -o pipefail
+          macos/build.sh 2>&1 | tee swift-build.log
+      - name: Report Swift errors as annotations
+        if: failure()
+        run: |
+          grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' swift-build.log \
+            | sed -E 's#^'"$PWD"'/##; s#^([^:]+):([0-9]+):([0-9]+): (error|warning): (.*)$#::\4 file=\1,line=\2,col=\3::\5#' \
+            | head -50 || true
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.6"
+
+      - name: Cache the ffmpeg build
+        uses: actions/cache@v4
+        with:
+          path: packaging/build/ffmpeg*
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('packaging/build_mac_app.sh') }}
+
+      - name: Build the engine (Python, flalac and ffmpeg)
+        run: FLALAC_BUILD=engine packaging/build_mac_app.sh
+
+      - name: Build Flalac.app with the engine inside
+        run: |
+          rm -rf macos/build
+          ENGINE_DIR="$PWD/packaging/dist/flalac-engine" macos/build.sh
+          ditto -c -k --keepParent macos/build/Flalac.app Flalac.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Flalac-app
+          path: Flalac.zip
+          retention-days: 30
