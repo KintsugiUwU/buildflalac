@@ -211,3 +211,30 @@ def test_artist_credits_and_apostrophes():
         200,
     ).found
     assert not lookup([lrclib_entry(artist="Someone Else")], "Title", "Artist", 200).found
+
+
+def test_a_dropped_connection_is_retried_not_raised():
+    import http.client
+    import io
+
+    from flalac.lyrics import LrclibClient
+
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http.client.RemoteDisconnected("Remote end closed connection")
+        return io.BytesIO(b'[{"trackName": "T"}]')
+
+    client = LrclibClient(opener=opener, sleep=lambda _: None)
+    assert client.search("T", "A") == [{"trackName": "T"}]
+    assert len(calls) == 2
+
+
+def test_retry_after_may_be_a_date():
+    from flalac.lyrics import _retry_after
+
+    assert _retry_after("3", 1.0) == 3.0
+    assert _retry_after("Wed, 21 Oct 2026 07:28:00 GMT", 4.0) == 4.0
+    assert _retry_after(None, 2.0) == 2.0

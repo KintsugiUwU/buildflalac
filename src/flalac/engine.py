@@ -22,6 +22,7 @@ import json
 import os
 import signal
 import sys
+import traceback
 from pathlib import Path
 
 from . import __version__
@@ -29,7 +30,7 @@ from .config import Settings
 from .db import Database
 from .itunes import LibraryError, sync_library
 from .jellyfin import Jellyfin, JellyfinError
-from .once import OnceError, run
+from .once import OnceError, Summary, run
 
 KEY_ENV = "FLALAC_JELLYFIN_KEY"
 
@@ -54,7 +55,9 @@ def _parser() -> argparse.ArgumentParser:
     sync.add_argument("--lyrics-style", choices=("plain", "synced"), default="plain")
     sync.add_argument("--max-bit-depth", type=int, choices=(16, 24, 0), default=16)
     sync.add_argument("--max-sample-rate", type=int, choices=(44100, 48000, 0), default=44100)
-    sync.add_argument("--confirm-deletes", action="store_true")
+    # Alone: confirm whatever is held. With a number: only if exactly that many are deleted
+    # (the count the person saw); otherwise they are held again.
+    sync.add_argument("--confirm-deletes", nargs="?", type=int, const=-1, default=None)
     for command in (sync, commands.add_parser("test-jellyfin")):
         command.add_argument("--jellyfin-url", default="")
         command.add_argument("--jellyfin-user", default="")
@@ -95,8 +98,11 @@ def _sync(args: argparse.Namespace) -> int:
             emit("stage", stage="converting")
         emit("progress", stage="converting", done=done, total=total, current=current)
 
+    def confirm(count: int) -> bool:
+        return args.confirm_deletes is not None and args.confirm_deletes in (-1, count)
+
     try:
-        summary = run(settings, progress, lambda count: args.confirm_deletes, every=1.0)
+        summary = run(settings, progress, confirm, every=1.0)
     except OnceError as error:
         emit("error", message=str(error))
         return 1
@@ -118,6 +124,8 @@ def _sync(args: argparse.Namespace) -> int:
                 app,
             )
         except LibraryError as error:
+            # The songs were converted all the same; report that before the failure
+            _emit_summary(summary, None, [])
             emit("error", message=f"The {app} library could not be updated: {error}")
             return 1
         finally:
@@ -136,6 +144,11 @@ def _sync(args: argparse.Namespace) -> int:
     if args.library != "none" and not settings.jellyfin_api_key:
         notes.append("Play counts: Jellyfin is not set up.")
     emit("stage", stage="done")
+    _emit_summary(summary, library, notes)
+    return 0
+
+
+def _emit_summary(summary: Summary, library: dict | None, notes: list[str]) -> None:
     emit(
         "summary",
         converted=summary.encoded,
@@ -149,7 +162,6 @@ def _sync(args: argparse.Namespace) -> int:
         library=library,
         notes=notes,
     )
-    return 0
 
 
 def _test_jellyfin(args: argparse.Namespace) -> int:
@@ -190,7 +202,14 @@ def main(argv: list[str] | None = None) -> int:
         return _test_jellyfin(args)
     if argv is None:  # the real program, not a test calling main() directly
         _stop_with_children()
-    return _sync(args)
+    try:
+        return _sync(args)
+    except Exception as error:
+        # Never a bare traceback: the app shows `error` messages (an unplugged drive, a
+        # database that can't be opened); the details go to stderr, which it logs
+        log(traceback.format_exc())
+        emit("error", message=f"{type(error).__name__}: {error}")
+        return 1
 
 
 if __name__ == "__main__":

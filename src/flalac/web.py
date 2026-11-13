@@ -7,6 +7,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.applications import Starlette
@@ -106,6 +107,21 @@ def _clock(ts: float | None) -> str:
     return time.strftime("%H:%M", time.localtime(ts)) if ts else "—"
 
 
+class SameOrigin(BaseHTTPMiddleware):
+    """A browser POST must come from flalac's own pages. Without it any web page could make
+    the browser confirm held deletions (a plain form post needs no CORS permission), most of
+    all when AUTH_TOKEN is not set. Clients that send no Origin (scripts, the Mac script) pass.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin")
+        if request.method == "POST" and origin is not None:
+            host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+            if urlsplit(origin).netloc.lower() != host.split(",")[0].strip().lower():
+                return PlainTextResponse("cross-site request refused", status_code=403)
+        return await call_next(request)
+
+
 class TokenGate(BaseHTTPMiddleware):
     def __init__(self, app, token: str) -> None:
         super().__init__(app)
@@ -176,7 +192,10 @@ def create_app(engine: Engine, runner: Runner | None = None) -> Starlette:
         return RedirectResponse("/", status_code=303)
 
     async def confirm_deletes(request: Request) -> Response:
-        engine.confirm_deletes()
+        form = await request.form()
+        count = str(form.get("count", ""))
+        # Only the number of deletions the person was shown; more go back on hold
+        engine.confirm_deletes(int(count) if count.isdigit() else None)
         return await scan(request)
 
     async def lyrics_style(request: Request) -> Response:
@@ -231,4 +250,5 @@ def create_app(engine: Engine, runner: Runner | None = None) -> Starlette:
         Route("/login", login, methods=["GET", "POST"]),
         Mount("/static", StaticFiles(directory=static), name="static"),
     ]
-    return Starlette(routes=routes, middleware=[Middleware(TokenGate, token=engine.s.auth_token)])
+    middleware = [Middleware(SameOrigin), Middleware(TokenGate, token=engine.s.auth_token)]
+    return Starlette(routes=routes, middleware=middleware)

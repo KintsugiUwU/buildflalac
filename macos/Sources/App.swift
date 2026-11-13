@@ -218,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(sync(_:)) {
-            return settings.foldersChosen && !controller.isRunning
+            return settings.foldersChosen && settings.foldersMissing == nil && !controller.isRunning
         }
         return true
     }

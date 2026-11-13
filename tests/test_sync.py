@@ -529,3 +529,110 @@ def test_no_lyrics_list(workspace, make_engine):
     (config / "no-lyrics.txt").write_text("")
     engine.run_pass()
     assert MP4(out)["\xa9lyr"] == ["Words LRCLIB has"]
+
+
+def test_an_unexpected_error_pauses_the_pass(workspace, make_engine, monkeypatch):
+    source, _, _ = workspace
+    song(source)
+    engine = make_engine()
+
+    def failing_scan():
+        raise PermissionError(13, "Permission denied", str(source / ALBUM))
+
+    monkeypatch.setattr(engine, "scan", failing_scan)
+    assert engine.run_pass() is None
+    assert engine.status["phase"] == "paused"
+    assert "Permission denied" in engine.status["current"]
+    monkeypatch.undo()
+    assert engine.run_pass() is not None  # the next pass runs normally
+    assert engine.status["phase"] == "idle"
+
+
+def test_your_lyrics_file_is_kept_where_lrclib_has_none(workspace, make_engine):
+    source, target, _ = workspace
+    song(source)
+    engine = make_engine()  # LRCLIB has nothing for this song
+    engine.run_pass()
+    txt = target / ALBUM / "01 First.txt"
+    assert not txt.exists()
+    txt.write_text("Words I typed in\n")
+    engine.run_pass()
+    assert txt.read_text() == "Words I typed in\n"
+    assert MP4(target / ALBUM / "01 First.m4a")["\xa9lyr"] == ["Words I typed in"]
+    track = engine.db.get(f"{ALBUM}/01 First.flac")
+    assert (track.lyrics_locked, track.lyrics_source) == (1, "edited")
+    assert engine.run_pass().empty
+
+
+def test_your_lrc_next_to_flalacs_txt_replaces_it(workspace, make_engine):
+    source, target, _ = workspace
+    song(source)
+    found = {"trackName": "First", "artistName": "Pola & Bryson × Emily Makis", "duration": 2}
+    engine = make_engine(
+        FakeLrclib({("First", found["artistName"]): [found | {"plainLyrics": "LRCLIB words"}]})
+    )
+    engine.run_pass()
+    txt, lrc = target / ALBUM / "01 First.txt", target / ALBUM / "01 First.lrc"
+    assert txt.read_text() == "LRCLIB words\n"
+    lrc.write_text("[00:00.50]My timing\n")
+    engine.run_pass()
+    assert lrc.read_text() == "[00:00.50]My timing\n"
+    assert not txt.exists()  # flalac's own file of the other kind goes
+    assert engine.db.get(f"{ALBUM}/01 First.flac").lyrics_source == "edited-synced"
+    assert engine.run_pass().empty
+
+
+def test_edited_lyrics_survive_a_change_of_output_format(workspace, make_engine):
+    source, target, _ = workspace
+    flac = song(source)
+    found = {"trackName": "First", "artistName": "Pola & Bryson × Emily Makis", "duration": 2}
+    client = FakeLrclib({("First", found["artistName"]): [found | {"plainLyrics": "LRCLIB words"}]})
+    engine = make_engine(client, target_format="alac")
+    engine.run_pass()
+    txt = target / ALBUM / "01 First.txt"
+    txt.write_text("My corrected lyrics\n")
+    engine.run_pass()
+    engine.db.close()
+    engine = make_engine(client, target_format="flac")
+    engine.run_pass()
+    assert not (target / ALBUM / "01 First.m4a").exists()
+    assert txt.read_text() == "My corrected lyrics\n"
+    tags = FLAC(flac)
+    tags["GENRE"] = "Changed"
+    tags.save()
+    old = time.time() - 60
+    os.utime(flac, (old, old))
+    engine.run_pass()
+    assert FLAC(target / ALBUM / "01 First.flac")["LYRICS"] == ["My corrected lyrics"]
+
+
+def test_lrclib_misses_are_asked_again_after_a_while(workspace, make_engine):
+    source, target, _ = workspace
+    song(source)
+    clock = [time.time()]
+    client = FakeLrclib()
+    engine = make_engine(client, clock=lambda: clock[0])
+    engine.run_pass()
+    asked = len(client.calls)
+    assert engine.run_pass().empty and len(client.calls) == asked  # the miss is cached
+    found = {"trackName": "First", "artistName": "Pola & Bryson × Emily Makis", "duration": 2}
+    client.results[("First", found["artistName"])] = [found | {"plainLyrics": "New on LRCLIB"}]
+    clock[0] += 31 * 86400
+    engine.run_pass()
+    assert (target / ALBUM / "01 First.txt").read_text() == "New on LRCLIB\n"
+
+
+def test_confirmed_deletes_are_only_the_ones_shown(workspace, make_engine):
+    source, target, _ = workspace
+    flacs = [song(source, f"0{i} Song", i) for i in range(1, 7)]
+    engine = make_engine()
+    engine.run_pass()
+    for flac in flacs[:4]:
+        flac.unlink()
+    assert engine.run_pass().held_deletes
+    flacs[4].unlink()  # one more vanishes after the person saw "4"
+    engine.confirm_deletes(4)
+    plan = engine.run_pass()
+    assert plan.held_deletes and not plan.deletes
+    engine.confirm_deletes(5)
+    assert len(engine.run_pass().deletes) == 5

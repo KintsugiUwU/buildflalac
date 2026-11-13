@@ -14,6 +14,7 @@ is still used when nothing closer exists.
 
 from __future__ import annotations
 
+import http.client
 import json
 import random
 import re
@@ -139,6 +140,14 @@ class LrclibUnavailable(RuntimeError):
     pass
 
 
+def _retry_after(value: str | None, default: float) -> float:
+    """Seconds from a Retry-After header; it may also be an HTTP date, then the default."""
+    try:
+        return max(0.0, float(value)) if value else default
+    except ValueError:
+        return default
+
+
 class LrclibClient:
     def __init__(
         self,
@@ -177,11 +186,13 @@ class LrclibClient:
                     if error.code == 404:
                         return []
                     if error.code in (429, 500, 502, 503, 504):
-                        retry = float(error.headers.get("Retry-After") or 2**attempt)
+                        retry = _retry_after(error.headers.get("Retry-After"), 2**attempt)
                         self._sleep(retry * (1 + random.random() * 0.3))
                         continue
                     raise LrclibUnavailable(f"HTTP {error.code}") from error
-                except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+                # OSError covers URLError and timeouts, and also a connection the server
+                # dropped (RemoteDisconnected, resets), which urllib raises unwrapped
+                except (OSError, http.client.HTTPException, json.JSONDecodeError):
                     self._last = time.monotonic()
                     self._sleep(2**attempt)
             raise LrclibUnavailable("no answer after 5 attempts")

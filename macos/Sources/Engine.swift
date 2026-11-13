@@ -57,6 +57,7 @@ enum Engine {
         } catch {
             return CollectedRun(launchError: error.localizedDescription)
         }
+        let started = Date()
         let watchdog = Task {
             try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
             process.terminate(grace: 2)
@@ -70,6 +71,8 @@ enum Engine {
             }
         }
         watchdog.cancel()
+        // Stopped by the watchdog: a slow answer, not a crash
+        run.timedOut = Date().timeIntervalSince(started) >= timeout
         return run
     }
 }
@@ -110,6 +113,8 @@ struct CollectedRun: Sendable {
     var output: [String] = []
     var exit: EngineExit?
     var launchError: String?
+    /// The command did not finish within its time limit and was stopped.
+    var timedOut = false
 }
 
 /// One running engine process. Its stdout and stderr are read line by line as they arrive,
@@ -178,7 +183,12 @@ final class EngineProcess: @unchecked Sendable {
             }
             queue.asyncAfter(deadline: .now() + grace) { [self] in
                 if exit == nil, process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
+                    let pid = process.processIdentifier
+                    // A sync runs in its own process group (engine.py calls setpgrp), with the
+                    // ffmpeg conversions in it: kill them too, not only the engine. For other
+                    // commands there is no such group and this does nothing.
+                    kill(-pid, SIGKILL)
+                    kill(pid, SIGKILL)
                 }
             }
         }

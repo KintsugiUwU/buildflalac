@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 import subprocess
+import time
 import zlib
 from collections.abc import Callable
 from pathlib import Path
@@ -129,11 +130,11 @@ def make_engine(workspace) -> Callable[..., Engine]:
     source, target, config = workspace
     engines: list[Engine] = []
 
-    def build(client: FakeLrclib | None = None, **overrides) -> Engine:
+    def build(client: FakeLrclib | None = None, clock=time.time, **overrides) -> Engine:
         options = {"source": source, "target": target, "config": config}
         options |= {"settle_seconds": 0, "workers": 2, **overrides}
         settings = Settings(**options)
-        engine = Engine(settings, Database(config / "flalac.db"), client or FakeLrclib())
+        engine = Engine(settings, Database(config / "flalac.db"), client or FakeLrclib(), clock)
         engines.append(engine)
         return engine
 

@@ -69,3 +69,25 @@ def test_quality_options_reach_the_settings(tmp_path):
     s = engine._settings(args)
     assert (s.max_bit_depth, s.max_sample_rate, s.jellyfin_music_path) == (24, 0, "/music")
     assert s.config == tmp_path / ".flalac"
+
+
+def test_unexpected_failures_are_error_lines_not_tracebacks(tmp_path, capsys, monkeypatch):
+    source = tmp_path / "FLAC"
+    source.mkdir()
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(engine, "run", broken)
+    args = ["sync", "--source", str(source), "--target", str(tmp_path / "ALAC")]
+    assert engine.main(args) == 1
+    error = lines(capsys)[-1]
+    assert error == {"type": "error", "message": "RuntimeError: database is locked"}
+
+
+def test_confirm_deletes_takes_the_count_shown(tmp_path):
+    parse = engine._parser().parse_args
+    base = ["sync", "--source", "s", "--target", "t"]
+    assert parse(base).confirm_deletes is None
+    assert parse([*base, "--confirm-deletes"]).confirm_deletes == -1
+    assert parse([*base, "--confirm-deletes", "12"]).confirm_deletes == 12

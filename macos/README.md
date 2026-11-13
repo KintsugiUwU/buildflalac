@@ -37,7 +37,7 @@ flalac-engine sync --source <FLAC dir> --target <ALAC dir> [--state <dir>]
     [--jellyfin-url <url> --jellyfin-user <user> [--jellyfin-music-path <path>]]
     --lyrics lrclib --lyrics-style plain|synced | --lyrics off
     --max-bit-depth 16|24|0 --max-sample-rate 44100|48000|0
-    [--confirm-deletes]
+    [--confirm-deletes [COUNT]]
 flalac-engine test-jellyfin --jellyfin-url <url> --jellyfin-user <user> [--jellyfin-music-path <path>]
 flalac-engine version
 ```
@@ -56,9 +56,14 @@ Lines that are not JSON objects, and all of stderr, go to the Log. Unknown messa
 ignored. Missing summary fields count as 0.
 
 - After `held-deletes` and exit 0, the app asks whether to remove the songs; if the user
-  agrees it runs `sync` again with `--confirm-deletes` and shows both runs as one summary.
-- Cancel sends SIGTERM and, if the engine is still running 10 seconds later, SIGKILL. The
-  engine should stop its workers (ffmpeg) and exit on SIGTERM.
+  agrees it runs `sync` again with `--confirm-deletes COUNT` (the number it showed) and shows
+  both runs as one summary. If a different number would go, the engine holds them again and
+  sends a new `held-deletes`.
+- An `error` can follow a `summary` (the songs were converted, then the library step failed);
+  the app keeps that summary with the failure.
+- Cancel sends SIGTERM and, if the engine is still running 10 seconds later, SIGKILL to the
+  engine's process group (a sync runs in its own) and the engine. The engine should stop its
+  workers (ffmpeg) and exit on SIGTERM.
 - Exit code 0 without a summary, a non-zero exit without an `error` message, or a signal are
   shown as failures with the exit code or signal.
 

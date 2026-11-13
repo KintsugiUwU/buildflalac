@@ -68,8 +68,9 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(lyricsStyle.rawValue, forKey: Key.lyricsStyle) }
     }
 
-    /// The API key as shown in Settings. Edits are saved to the Keychain shortly after
-    /// typing stops, and at once when Settings closes or a sync or test starts.
+    /// The API key as shown in Settings. Edits are saved to the Keychain when Settings closes,
+    /// the app quits, or a sync or test starts: not while typing, so a key is never saved
+    /// under a user name that is only half typed.
     @Published private(set) var jellyfinKey = ""
     /// Why the key could not be read or saved.
     @Published private(set) var keyProblem: String?
@@ -105,6 +106,21 @@ final class AppSettings: ObservableObject {
         !flacFolder.isEmpty && !alacFolder.isEmpty
     }
 
+    /// Why a sync can't start now (a share or drive that isn't connected), nil when it can.
+    /// Checked by the Sync button, the Sync menu item and the controller alike.
+    var foldersMissing: String? {
+        if !Self.isFolder(flacFolder) { return "The FLAC folder is not reachable. Connect the share." }
+        if !Self.isFolder(alacFolder) { return "The ALAC folder is not reachable. Connect the drive." }
+        return nil
+    }
+
+    private static func isFolder(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return !path.isEmpty
+            && FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
     /// The --state override, when set.
     var stateFolder: String? {
         let folder = defaults.string(forKey: Key.stateFolder) ?? ""
@@ -130,8 +146,9 @@ final class AppSettings: ObservableObject {
         return JellyfinAccount(url: url, user: user, musicPath: path)
     }
 
-    /// What `sync` should do with these settings.
-    func syncRequest(jellyfin: JellyfinAccount?, confirmDeletes: Bool) -> SyncRequest {
+    /// What `sync` should do with these settings. `confirmDeletes` is the number of held
+    /// deletions the user agreed to, nil when none.
+    func syncRequest(jellyfin: JellyfinAccount?, confirmDeletes: Int?) -> SyncRequest {
         SyncRequest(
             source: flacFolder,
             target: alacFolder,
@@ -149,6 +166,7 @@ final class AppSettings: ObservableObject {
     // MARK: - The API key
 
     /// Shows the key saved for the current user (when Settings opens or the user changes).
+    /// Read off the main thread: the Keychain may first ask the user to allow it.
     func loadKey() {
         guard !keyEdited else { return }
         keyTask?.cancel()
@@ -158,19 +176,25 @@ final class AppSettings: ObservableObject {
             keyProblem = nil
             return
         }
-        do {
-            jellyfinKey = try Keychain.key(for: account) ?? ""
-            keyProblem = nil
-        } catch {
-            keyProblem = Self.describe(error)
+        keyTask = Task { [weak self] in
+            let result = await Self.readKey(account)
+            guard !Task.isCancelled, let self, !self.keyEdited,
+                  self.keyAccount(self.jellyfinUser) == account else { return }
+            switch result {
+            case .success(let key):
+                self.jellyfinKey = key ?? ""
+                self.keyProblem = nil
+            case .failure(let error):
+                self.keyProblem = Self.describe(error)
+            }
         }
     }
 
     func editKey(_ key: String) {
         guard key != jellyfinKey else { return }
+        keyTask?.cancel()  // a load still under way must not replace what is being typed
         jellyfinKey = key
         keyEdited = true
-        later { $0.saveKey() }
     }
 
     /// Saves an edited key now. An emptied field removes the saved key.
@@ -179,11 +203,12 @@ final class AppSettings: ObservableObject {
         guard keyEdited else { return }
         let account = keyAccount(jellyfinUser)
         guard !account.isEmpty else { return }  // saved once there is a user to save it for
+        let key = Self.trimmed(jellyfinKey)  // a pasted key often brings a space or newline
         do {
-            if jellyfinKey.isEmpty {
+            if key.isEmpty {
                 try Keychain.deleteKey(for: account)
             } else {
-                try Keychain.setKey(jellyfinKey, for: account)
+                try Keychain.setKey(key, for: account)
             }
             keyEdited = false
             keyProblem = nil
@@ -192,25 +217,48 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    /// The key to pass to the engine. Read off the main thread: the Keychain may first ask
-    /// the user to allow it (after the app was updated, for example).
-    func currentKey() async -> String? {
-        saveKey()
-        if keyEdited {
-            return jellyfinKey.isEmpty ? nil : jellyfinKey
-        }
-        let account = keyAccount(jellyfinUser)
-        guard !account.isEmpty else { return nil }
-        let key = await Task.detached { (try? Keychain.key(for: account)) ?? nil }.value
-        return key?.isEmpty == false ? key : nil
+    /// What reading the key for the engine found.
+    enum KeyLookup: Equatable {
+        case key(String)
+        /// No key is saved for this user.
+        case missing
+        /// The Keychain could not be read (access denied, for example): not the same as no key.
+        case failed(String)
     }
 
-    private func userChanged() {
+    /// The key to pass to the engine. Read off the main thread: the Keychain may first ask
+    /// the user to allow it (after the app was updated, for example).
+    func currentKey() async -> KeyLookup {
+        saveKey()
         if keyEdited {
-            later { $0.saveKey() }
-        } else {
+            let key = Self.trimmed(jellyfinKey)
+            return key.isEmpty ? .missing : .key(key)
+        }
+        let account = keyAccount(jellyfinUser)
+        guard !account.isEmpty else { return .missing }
+        switch await Self.readKey(account) {
+        case .success(let key):
+            let key = Self.trimmed(key ?? "")
+            return key.isEmpty ? .missing : .key(key)
+        case .failure(let error):
+            return .failed(Self.describe(error))
+        }
+    }
+
+    /// A key edited for one user stays in the field while the user name is typed, and is
+    /// saved for whatever name is there in the end. Otherwise the new user's key is shown.
+    private func userChanged() {
+        if !keyEdited {
             later { $0.loadKey() }
         }
+    }
+
+    private nonisolated static func readKey(_ account: String) async -> Result<String?, any Error> {
+        await Task.detached { Result { try Keychain.key(for: account) } }.value
+    }
+
+    private nonisolated static func trimmed(_ key: String) -> String {
+        key.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Runs `action` once typing has paused.

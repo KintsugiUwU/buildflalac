@@ -143,6 +143,14 @@ class Database:
             row = self._conn.execute("SELECT text FROM lyrics_cache WHERE key=?", (key,)).fetchone()
         return row["text"] if row else None
 
+    def cached_lyrics_time(self, key: str) -> float:
+        """When this answer was fetched (0 when it isn't cached)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT fetched FROM lyrics_cache WHERE key=?", (key,)
+            ).fetchone()
+        return float(row["fetched"]) if row else 0.0
+
     def cache_lyrics(self, key: str, text: str) -> None:
         with self._lock:
             self._conn.execute(
