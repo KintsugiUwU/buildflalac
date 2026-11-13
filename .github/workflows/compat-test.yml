@@ -1,0 +1,31 @@
+# Experiment: how far is the Swift app from building for Intel and older macOS?
+# Compiles only (no engine), keeps going on errors and reports them as annotations.
+name: Compatibility test
+
+on:
+  push:
+    branches: [compat-test]
+
+jobs:
+  swift:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-apple-macos11.0, x86_64-apple-macos10.15, x86_64-apple-macos10.13]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compiler
+        run: swiftc --version
+      - name: Compile for ${{ matrix.target }}
+        run: |
+          set -o pipefail
+          swiftc -target "${{ matrix.target }}" -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            -swift-version 6 -parse-as-library -typecheck macos/Sources/*.swift 2>&1 | tee build.log
+      - name: Report errors as annotations
+        if: failure()
+        run: |
+          echo "errors: $(grep -c ': error:' build.log)"
+          grep -E '^/.*:[0-9]+:[0-9]+: error:' build.log \
+            | sed -E 's#^'"$PWD"'/##; s#^([^:]+):([0-9]+):([0-9]+): error: (.*)$#::error file=\1,line=\2,col=\3::\4#' \
+            | sort -u | head -50 || true
