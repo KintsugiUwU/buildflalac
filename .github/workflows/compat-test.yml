@@ -25,8 +25,11 @@ jobs:
       - name: Report errors as annotations
         if: failure()
         run: |
-          echo "errors: $(grep -c ': error:' build.log)"
-          grep -E ':[0-9]+:[0-9]+: error:' build.log \
-            | sed -E 's#^'"$PWD"'/##; s#^([^:]+):([0-9]+):([0-9]+): error: (.*)$#::error file=\1,line=\2,col=\3::\4#' \
-            | sort -u | head -50 || true
-          grep -E '^(error|<unknown>):' build.log | head -5 | sed 's/^/::error::/' || true
+          # GitHub shows at most 10 annotations per step: one summary per file, then a total
+          grep -E ':[0-9]+:[0-9]+: error:' build.log | sed -E 's#^'"$PWD"'/##' | sort -u > errors.txt || true
+          cut -d: -f1 errors.txt | sort | uniq -c | sort -rn | head -8 | while read -r n file; do
+            first=$(grep -m1 "^$file:" errors.txt | sed -E 's/^[^:]+:[0-9]+:[0-9]+: error: //')
+            echo "::error file=$file::$n errors, e.g. $first"
+          done
+          kinds=$(sed -E 's/.*error: //; s/.(macOS [0-9.]+ or newer).*/\1/' errors.txt | sed -E "s/'[^']*'/X/g" | sort | uniq -c | sort -rn | head -6 | tr '\n' ';')
+          echo "::error::total $(wc -l < errors.txt) errors in $(cut -d: -f1 errors.txt | sort -u | wc -l) files | $kinds"
