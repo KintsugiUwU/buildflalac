@@ -9,6 +9,8 @@
 -- Editor as an Application and run it whenever you like, for example after syncing an iPod.
 
 property serverURL : "__SERVER__"
+-- Filled in when flalac is protected with AUTH_TOKEN; keep this script to yourself then
+property authToken : "__TOKEN__"
 property mirrorFolder : ""
 
 on run
@@ -100,7 +102,9 @@ on askServer(root, pids, counts, locs)
 		write body to fh as «class utf8»
 	end try
 	close access fh
-	return do shell script "curl -sS -f --max-time 900 -H 'Content-Type: text/plain; charset=utf-8' --data-binary @" & quoted form of requestFile & " " & quoted form of (serverURL & "/api/mac-sync")
+	set auth to ""
+	if authToken is not "" then set auth to " -H " & quoted form of ("Authorization: Bearer " & authToken)
+	return do shell script "curl -sS -f --max-time 900 -H 'Content-Type: text/plain; charset=utf-8'" & auth & " --data-binary @" & quoted form of requestFile & " " & quoted form of (serverURL & "/api/mac-sync")
 end askServer
 
 on applyAnswer(appName, reply)

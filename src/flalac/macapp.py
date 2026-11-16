@@ -28,7 +28,6 @@ from .db import Database
 from .itunes import LibraryError, app_name, sync_library
 from .once import OnceError, run
 
-DEFAULT_SOURCE = "/Volumes/HelixNAS/NVME/Music/FLAC"
 SETTINGS_FILE = "settings.json"
 KEYCHAIN_SERVICE = "flalac-jellyfin"
 
@@ -125,12 +124,10 @@ def load_settings(drive: Path) -> Settings | None:
     path = state / SETTINGS_FILE
     stored = json.loads(path.read_text()) if path.is_file() else {}
     if not stored.get("source"):
-        source = Path(DEFAULT_SOURCE)
-        if not source.is_dir():
-            dialog("Choose the FLAC folder flalac should copy from (for example on the NAS share).")
-            source = choose_folder("Choose the FLAC folder:")
-            if source is None:
-                return None
+        dialog("Choose the FLAC folder flalac should copy from (for example on the NAS share).")
+        source = choose_folder("Choose the FLAC folder:")
+        if source is None:
+            return None
         stored["source"] = str(source).rstrip("/")
         state.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(stored, indent=2) + "\n")
@@ -158,6 +155,15 @@ def load_settings(drive: Path) -> Settings | None:
 
 
 def main() -> int:
+    try:
+        return _main()
+    except Exception as error:
+        # A double-clicked app has no terminal: say what went wrong instead of just closing
+        dialog(f"flalac stopped unexpectedly:\n{type(error).__name__}: {error}", stop=True)
+        return 1
+
+
+def _main() -> int:
     drive = drive_root()
     if not str(drive).startswith("/Volumes/"):
         dialog(

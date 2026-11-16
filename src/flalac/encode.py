@@ -100,6 +100,17 @@ def encode(source: Path, destination: Path, audio: AudioFacts, settings: Setting
 
 
 def verify(source: Path, encoded: Path, audio: AudioFacts, job: Plan) -> None:
+    if job.lossless:
+        # Decoding the output for its checksum is the whole check: a file that does not
+        # decode cleanly cannot give the source's checksum.
+        try:
+            decoded = pcm_md5(encoded, job.bits)
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or "").strip()[:200]
+            raise EncodeError(f"output does not decode cleanly: {detail}") from error
+        if expected_md5(source, audio) != decoded:
+            raise EncodeError("decoded audio differs from the source")
+        return
     check = subprocess.run(
         ["ffmpeg", "-nostdin", "-v", "error", "-i", str(encoded), "-f", "null", "-"],
         capture_output=True,
@@ -107,8 +118,6 @@ def verify(source: Path, encoded: Path, audio: AudioFacts, job: Plan) -> None:
     )
     if check.returncode != 0 or check.stderr.strip():
         raise EncodeError(f"output does not decode cleanly: {check.stderr.strip()[:200]}")
-    if job.lossless and expected_md5(source, audio) != pcm_md5(encoded, job.bits):
-        raise EncodeError("decoded audio differs from the source")
 
 
 def expected_md5(source: Path, audio: AudioFacts) -> str:

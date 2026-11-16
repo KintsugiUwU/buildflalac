@@ -17,6 +17,8 @@ import json
 import os
 import threading
 import time
+import unicodedata
+import zlib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -33,6 +35,9 @@ LRCLIB_RULES = "2"  # bump when lyrics.lookup() finds more, so earlier misses ar
 LYRICS_RETRY_SECONDS = 3600  # ask LRCLIB again at most once an hour after it was unreachable
 LRCLIB_PAUSE_SECONDS = 600  # after a failure, skip LRCLIB this long
 LRCLIB_MISS_SECONDS = 30 * 86400  # LRCLIB had nothing: ask again after this long (it grows)
+LRCLIB_MISS_SPREAD = (
+    7 * 86400
+)  # ...plus up to this, fixed per song, so they don't all come due at once
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +69,11 @@ class SourceMissingError(RuntimeError):
 
 def text_hash(text: str) -> str:
     return hashlib.sha1(text.encode()).hexdigest()
+
+
+def nfc(text: str) -> str:
+    """Paths compare in one Unicode form: macOS and Linux spell accented names differently."""
+    return unicodedata.normalize("NFC", text)
 
 
 class Engine:
@@ -282,27 +292,49 @@ class Engine:
             self.s.lyrics == "lrclib"
             and track.lyrics_source == "none"
             and not track.lyrics_locked
-            and now - track.updated > LRCLIB_MISS_SECONDS
-            and track.rel not in self._no_lyrics()
+            and now - track.updated > LRCLIB_MISS_SECONDS + self._spread(track.rel)
+            and nfc(track.rel) not in self._no_lyrics()
         )
+
+    @staticmethod
+    def _spread(rel: str) -> int:
+        return zlib.crc32(rel.encode()) % LRCLIB_MISS_SPREAD
 
     def _lyrics_dirty(self, sf: SourceFile, track: Track) -> bool:
         """Sidecars changed next to the source, or someone edited, added or removed a lyrics
         file next to the target."""
         if not self.s.lyrics_files:
             return sf.side_mtime > track.updated
-        if track.lyrics_locked:
-            sides = [p for p in [self._edited_file(track.target_rel, track.lyrics_source)] if p]
-        else:
-            sides = self._sidecars(track.target_rel)
-            if not sides and track.lyrics_hash:
+        kept = self._edited_file(track.target_rel, track.lyrics_source)
+        # A locked song is its one edited file; otherwise every lyrics file there counts
+        sides = [kept] if track.lyrics_locked else self._sidecars(track.target_rel)
+        if kept is None:
+            if track.lyrics_hash and not track.lyrics_locked:
                 return True  # our lyrics file disappeared; write it again
+            sides = []
         for side in sides:
-            # A file not modified since the song was last saved still holds what was recorded;
-            # comparing times first saves reading every lyrics file on every scan.
-            if side.stat().st_mtime > track.updated and self._file_hash(side) != track.lyrics_hash:
+            # The file flalac recorded, with the same change stamp and size, still holds what
+            # was recorded: no need to read every lyrics file on every scan. Nothing here
+            # compares a file's time with the clock, so a file copied in with an old date
+            # (Finder, cp -p) is noticed like any other.
+            stat = self._stat_key(side)
+            if side == kept and stat == track.lyrics_stat:
+                continue
+            if self._file_hash(side) != track.lyrics_hash:
                 return True
+            if side == kept:
+                self.db.set_lyrics_stat(track.rel, stat)  # same text; remember how it looks
         return sf.side_mtime > track.updated
+
+    @staticmethod
+    def _stat_key(path: Path) -> str:
+        stat = path.stat()
+        return f"{stat.st_ctime_ns}:{stat.st_size}"
+
+    def _lyrics_stat(self, target_rel: str, source: str | None) -> str | None:
+        """How the song's lyrics file looks now, for `Track.lyrics_stat`."""
+        kept = self._edited_file(target_rel, source) if self.s.lyrics_files else None
+        return self._stat_key(kept) if kept is not None else None
 
     # ---------------------------------------------------------------- applying
     def run_pass(self, log: Callable[[str], None] = lambda _: None) -> Plan | None:
@@ -310,8 +342,8 @@ class Engine:
             return None
         try:
             self.status.update(phase="scanning", current="")
-            self._apply_no_lyrics_changes()
             try:
+                self._apply_no_lyrics_changes()
                 plan = self.scan()
                 self.status["held_deletes"] = len(self._held) if plan.held_deletes else 0
                 if plan.held_deletes:
@@ -395,7 +427,7 @@ class Engine:
         locked: bool,
         track: Track | None,
     ) -> lyrics.Lyrics:
-        if sf.rel in self._no_lyrics():
+        if nfc(sf.rel) in self._no_lyrics():
             return lyrics.Lyrics("", "none")
         if locked:
             source, written = (track.lyrics_source, track.lyrics_hash) if track else (None, None)
@@ -413,14 +445,16 @@ class Engine:
         if not path.is_file():
             return set()
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+        return {nfc(line.strip()) for line in lines if line.strip() and not line.startswith("#")}
 
     def _apply_no_lyrics_changes(self) -> None:
         """Songs added to or removed from no-lyrics.txt get their lyrics chosen again."""
         now = self._no_lyrics()
         before = set(filter(None, self.db.meta("no_lyrics").split("\n")))
         if now != before:
-            self.db.ask_lyrics_again(now ^ before)
+            changed = now ^ before
+            # The database keeps paths as the file system spells them
+            self.db.ask_lyrics_again({rel for rel in self.db.tracks() if nfc(rel) in changed})
             self.db.set_meta("no_lyrics", "\n".join(sorted(now)))
 
     def _online(self, title: str, artist: str, seconds: float) -> lyrics.Answer | None:
@@ -557,6 +591,8 @@ class Engine:
                 None,
                 0,
                 int(chosen.retry),
+                time.time(),
+                self._lyrics_stat(target_rel, chosen.source),
             )
         )
         self.db.event("encoded", sf.rel, chosen.source)
@@ -570,14 +606,27 @@ class Engine:
         tags = media.read_tags(sf.path)
         locked = self._detect_edit(track, track.target_rel)
         chosen = self._lyrics_for(sf, tags, audio.seconds, track.target_rel, locked, track)
-        media.write_tags(target, tags, chosen.text)
+        fingerprint = tags.fingerprint()
+        embedded = text_hash(chosen.text.strip()) if chosen.text else None
+        # A retag that finds the same tags and lyrics (LRCLIB asked again and still has nothing,
+        # a tag flalac does not copy was edited) leaves the copy alone: no rewrite for backups
+        # to pick up, nothing for iTunes to refresh.
+        same = (
+            track.status == "synced"
+            and (fingerprint, embedded) == (track.tag_hash, track.lyrics_hash)
+            and target.is_file()
+        )
+        if not same:
+            media.write_tags(target, tags, chosen.text)
+            track.changed = time.time()
         track.lyrics_hash = self._write_sidecar(track.target_rel, chosen, locked, track.lyrics_hash)
         track.lyrics_locked = int(locked)
-        track.size, track.mtime, track.tag_hash = sf.size, sf.mtime, tags.fingerprint()
+        track.size, track.mtime, track.tag_hash = sf.size, sf.mtime, fingerprint
         track.lyrics_source, track.status, track.error = chosen.source, "synced", None
         track.lyrics_retry = int(chosen.retry)
+        track.lyrics_stat = self._lyrics_stat(track.target_rel, chosen.source)
         self.db.save(track)
-        self.db.event("retagged", sf.rel, chosen.source)
+        self.db.event("retagged" if not same else "checked", sf.rel, chosen.source)
 
     def _move(self, old: str, sf: SourceFile) -> None:
         track = self.db.get(old)
@@ -601,6 +650,7 @@ class Engine:
         self.db.rename(old, sf.rel)
         track = self.db.get(sf.rel)
         track.target_rel = new_rel
+        track.lyrics_stat = self._lyrics_stat(new_rel, track.lyrics_source)  # renamed with it
         self.db.save(track)
         self.db.event("moved", sf.rel, f"from {old}")
         if changed:
