@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS tracks (
     status TEXT NOT NULL,          -- synced | error
     error TEXT,
     updated REAL NOT NULL,
-    lyrics_retry INTEGER NOT NULL DEFAULT 0     -- LRCLIB was unreachable; ask again later
+    lyrics_retry INTEGER NOT NULL DEFAULT 0,    -- LRCLIB was unreachable; ask again later
+    changed REAL NOT NULL DEFAULT 0,            -- when the copy's audio or tags last changed
+    lyrics_stat TEXT                            -- change stamp and size of the lyrics file
 );
 CREATE INDEX IF NOT EXISTS tracks_identity ON tracks(identity);
 CREATE TABLE IF NOT EXISTS lyrics_cache (
@@ -68,6 +70,8 @@ class Track:
     error: str | None
     updated: float
     lyrics_retry: int = 0
+    changed: float = 0.0  # 0 in rows from before this column: `updated` stands in
+    lyrics_stat: str | None = None  # the lyrics file as last seen, to spot edits without reading
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +83,11 @@ class MacMemory:
 
 
 # Columns added after the first release, with their SQL definition.
-MIGRATIONS = {"lyrics_retry": "INTEGER NOT NULL DEFAULT 0"}
+MIGRATIONS = {
+    "lyrics_retry": "INTEGER NOT NULL DEFAULT 0",
+    "changed": "REAL NOT NULL DEFAULT 0",
+    "lyrics_stat": "TEXT",
+}
 
 
 class Database:
@@ -132,6 +140,10 @@ class Database:
     def delete(self, rel: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM tracks WHERE rel=?", (rel,))
+
+    def set_lyrics_stat(self, rel: str, stat: str | None) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE tracks SET lyrics_stat=? WHERE rel=?", (stat, rel))
 
     def rename(self, old: str, new: str) -> None:
         with self._lock:

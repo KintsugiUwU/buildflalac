@@ -57,11 +57,18 @@ class Runner:
 
     def _loop(self) -> None:
         settings = self.engine.s
-        removed = self.engine.remove_stale_temp_files()
-        if removed:
-            self.engine.db.event("cleanup", None, f"removed {removed} unfinished temp files")
+        try:
+            removed = self.engine.remove_stale_temp_files()
+            if removed:
+                self.engine.db.event("cleanup", None, f"removed {removed} unfinished temp files")
+        except Exception as error:  # e.g. the target share is away; the next start cleans up
+            self.engine.db.event("error", None, f"cleanup failed: {error}"[:500])
         while not self._stop.is_set():
-            plan = self.engine.run_pass()
+            try:
+                plan = self.engine.run_pass()
+            except Exception as error:  # run_pass catches its own; this loop must never end
+                self.engine.status.update(phase="paused", current=f"pass failed: {error}"[:500])
+                plan = None
             timeout = settings.rescan_minutes * 60 or None
             if plan is not None and plan.unsettled:
                 timeout = settings.settle_seconds + 1

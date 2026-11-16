@@ -617,7 +617,7 @@ def test_lrclib_misses_are_asked_again_after_a_while(workspace, make_engine):
     assert engine.run_pass().empty and len(client.calls) == asked  # the miss is cached
     found = {"trackName": "First", "artistName": "Pola & Bryson × Emily Makis", "duration": 2}
     client.results[("First", found["artistName"])] = [found | {"plainLyrics": "New on LRCLIB"}]
-    clock[0] += 31 * 86400
+    clock[0] += 38 * 86400  # past the 30 days and the per-song spread
     engine.run_pass()
     assert (target / ALBUM / "01 First.txt").read_text() == "New on LRCLIB\n"
 
@@ -636,3 +636,58 @@ def test_confirmed_deletes_are_only_the_ones_shown(workspace, make_engine):
     assert plan.held_deletes and not plan.deletes
     engine.confirm_deletes(5)
     assert len(engine.run_pass().deletes) == 5
+
+
+def test_a_lyrics_file_copied_in_with_an_old_date_is_noticed(workspace, make_engine):
+    source, target, _ = workspace
+    song(source)
+    engine = make_engine()
+    engine.run_pass()
+    txt = target / ALBUM / "01 First.txt"
+    txt.write_text("Prepared last week\n")
+    old = time.time() - 7 * 86400
+    os.utime(txt, (old, old))  # Finder and cp -p keep a file's modification date
+    engine.run_pass()
+    assert MP4(target / ALBUM / "01 First.m4a")["\xa9lyr"] == ["Prepared last week"]
+
+
+def test_an_unreadable_no_lyrics_list_pauses_the_pass(workspace, make_engine, monkeypatch):
+    song(workspace[0])
+    engine = make_engine()
+
+    def unreadable():
+        raise PermissionError(13, "Permission denied", "no-lyrics.txt")
+
+    monkeypatch.setattr(engine, "_no_lyrics", unreadable)
+    assert engine.run_pass() is None
+    assert engine.status["phase"] == "paused"
+
+
+def test_asking_lrclib_again_leaves_an_unchanged_copy_alone(workspace, make_engine):
+    source, target, _ = workspace
+    song(source)
+    clock = [time.time()]
+    engine = make_engine(FakeLrclib(), clock=lambda: clock[0])
+    engine.run_pass()
+    out = target / ALBUM / "01 First.m4a"
+    before = (out.stat().st_mtime_ns, engine.db.get(f"{ALBUM}/01 First.flac").changed)
+    clock[0] += 40 * 86400  # past the 30 days and the per-song spread
+    plan = engine.run_pass()
+    assert len(plan.retag) == 1  # LRCLIB was asked again and still has nothing
+    assert (out.stat().st_mtime_ns, engine.db.get(f"{ALBUM}/01 First.flac").changed) == before
+
+
+def test_no_lyrics_list_matches_accented_names_in_either_form(workspace, make_engine):
+    import unicodedata
+
+    source, target, config = workspace
+    name = "01 Perché"
+    make_flac(source / ALBUM / f"{name}.flac", tags=default_tags("First"))
+    found = {"trackName": "First", "artistName": "Pola & Bryson × Emily Makis", "duration": 2}
+    words = found | {"plainLyrics": "Words"}
+    config.mkdir(exist_ok=True)
+    listed = unicodedata.normalize("NFD", f"{ALBUM}/{name}.flac")  # as a Mac may write it
+    (config / "no-lyrics.txt").write_text(listed + "\n", encoding="utf-8")
+    engine = make_engine(FakeLrclib({("First", found["artistName"]): [words]}))
+    engine.run_pass()
+    assert engine.db.get(f"{ALBUM}/{name}.flac").lyrics_source == "none"

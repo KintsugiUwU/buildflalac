@@ -68,3 +68,21 @@ def test_cross_site_posts_are_refused(workspace, make_engine):
     )
     assert own.status_code in (200, 303)
     assert (engine._confirm_deletes, engine._confirm_count) == (True, 4)
+
+
+def test_the_mac_script_carries_the_token(workspace, make_engine):
+    client = TestClient(create_app(make_engine(auth_token='s3"cret')))
+    script = client.get("/mac/script", headers={"authorization": 'Bearer s3"cret'}).text
+    assert 'property authToken : "s3\\"cret"' in script
+    open_script = TestClient(create_app(make_engine())).get("/mac/script").text
+    assert 'property authToken : ""' in open_script
+
+
+def test_version_is_the_same_everywhere():
+    import tomllib
+    from pathlib import Path
+
+    from flalac import __version__
+
+    project = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())
+    assert project["project"]["version"] == __version__

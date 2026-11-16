@@ -82,7 +82,10 @@ class MacSync:
         mirrored: dict[str, Track] = {}
         by_identity: dict[str, Track] = {}
         for track in self.db.tracks().values():
-            if track.status == "synced" and track.target_rel:
+            # Every song that has a copy, also one whose last retag or re-encode failed: its
+            # copy is still there and playable. Leaving it out would remove it from the
+            # library, and adding it back later loses its playlists, rating and date added.
+            if track.target_rel:
                 mirrored[nfc(track.target_rel)] = track
                 by_identity[track.identity] = track
         memory = self.db.mac_memory(request.mac)
@@ -120,7 +123,9 @@ class MacSync:
                 actions.append(f"remove\t{mac_track.pid}")  # a duplicate entry
                 continue
             seen.add(rel)
-            if last_sync and track.updated > last_sync:
+            # `changed` is when the copy's tags or audio last changed; older rows only have
+            # `updated`, which also moves when nothing in the file did
+            if last_sync and (track.changed or track.updated) > last_sync:
                 actions.append(f"refresh\t{mac_track.pid}")
             item = jelly.get(nfc(track.rel))
             if remembered and remembered.identity != track.identity:

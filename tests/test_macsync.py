@@ -12,7 +12,7 @@ from flalac.db import Database, Track
 from flalac.jellyfin import Item, JellyfinError
 from flalac.macsync import MacSync, parse_request
 
-ROOT = "/Volumes/HelixNAS/NVME/Music/ALAC"
+ROOT = "/Volumes/Music/ALAC"
 
 
 class FakeJellyfin:
@@ -143,3 +143,27 @@ def test_accented_paths_match_whatever_the_normalization(db):
     mirror(db, "Réel", "i1")
     nfd = unicodedata.normalize("NFD", f"{ROOT}/A/Réel.m4a")
     assert run(db, None, request(("P1", 0, nfd))) == []
+
+
+def test_a_song_whose_last_retag_failed_stays_in_the_library(db):
+    mirror(db, "One", "i1")
+    mirror(db, "Two", "i2")
+    text = request(("P1", 5, f"{ROOT}/A/One.m4a"), ("P2", 9, f"{ROOT}/A/Two.m4a"))
+    assert run(db, None, text) == []
+    track = db.get("A/Two.flac")
+    track.status, track.error = "error", "RemoteDisconnected"  # the copy is still on disk
+    db.save(track)
+    assert not [action for action in run(db, None, text) if action.startswith("remove")]
+
+
+def test_only_a_changed_copy_is_refreshed(db):
+    mirror(db, "One", "i1")
+    text = request(("P1", 0, f"{ROOT}/A/One.m4a"))
+    run(db, None, text)
+    track = db.get("A/One.flac")
+    track.changed = 1.0  # checked again since (updated moves), but the file is as it was
+    db.save(track)
+    assert run(db, None, text) == []
+    track.changed = 4_000_000_000.0
+    db.save(track)
+    assert run(db, None, text) == ["refresh\tP1"]

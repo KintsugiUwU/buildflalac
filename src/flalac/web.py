@@ -173,6 +173,10 @@ def create_app(engine: Engine, runner: Runner | None = None) -> Starlette:
     async def mac_script(request: Request) -> Response:
         server = str(request.base_url).rstrip("/")
         text = script.read_text(encoding="utf-8").replace("__SERVER__", server)
+        # Only someone already past the token gate gets here; the script needs the token to
+        # reach /api/mac-sync. AppleScript strings escape \ and ".
+        token = engine.s.auth_token.replace("\\", "\\\\").replace('"', '\\"')
+        text = text.replace("__TOKEN__", token)
         headers = {"Content-Disposition": 'attachment; filename="flalac for Mac.applescript"'}
         return PlainTextResponse(text, headers=headers)
 
