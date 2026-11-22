@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import unicodedata
 from pathlib import Path
 
@@ -167,3 +168,62 @@ def test_only_a_changed_copy_is_refreshed(db):
     track.changed = 4_000_000_000.0
     db.save(track)
     assert run(db, None, text) == ["refresh\tP1"]
+
+
+def test_renamed_song_is_followed_without_jellyfin(db):
+    mirror(db, "One", "i1")
+    run(db, None, request(("P1", 2, f"{ROOT}/A/One.m4a")))
+    db.rename("A/One.flac", "A/Uno.flac")
+    track = db.get("A/Uno.flac")
+    track.target_rel = "A/Uno.m4a"
+    db.save(track)
+    actions = run(db, None, request(("P1", 2, "")))
+    assert actions == [f"move\tP1\t{ROOT}/A/Uno.m4a", "refresh\tP1"]
+
+
+def test_tracks_remembered_before_jellyfin_take_the_larger_count_when_first_paired(db):
+    mirror(db, "One", "i1")
+    run(db, None, request(("P1", 3, f"{ROOT}/A/One.m4a")))  # Jellyfin not set up yet
+    jelly = FakeJellyfin({"A/One.flac": 5})  # the same plays, counted on both sides
+    assert run(db, jelly, request(("P1", 3, f"{ROOT}/A/One.m4a"))) == ["plays\tP1\t5"]
+    assert jelly.counts["A/One.flac"] == 5
+
+
+def test_a_new_cover_re_adds_the_song_with_its_plays(db):
+    mirror(db, "One", "i1")
+    run(db, None, request(("P1", 4, f"{ROOT}/A/One.m4a")))
+    track = db.get("A/One.flac")
+    track.changed = track.art_changed = 4_000_000_000.0  # new cover after the last sync
+    db.save(track)
+    actions = run(db, None, request(("P1", 4, f"{ROOT}/A/One.m4a")))
+    assert actions == [f"readd\tP1\t{ROOT}/A/One.m4a\t4"]
+    assert "P1" not in db.mac_memory("MacBook")  # the new entry is paired next time
+
+
+def test_a_re_added_song_carries_the_agreed_count_and_updates_jellyfin(db):
+    mirror(db, "One", "i1")
+    jelly = FakeJellyfin({"A/One.flac": 4})
+    run(db, jelly, request(("P1", 4, f"{ROOT}/A/One.m4a")))
+    track = db.get("A/One.flac")
+    track.art_changed = time.time()  # new cover after the last sync
+    db.save(track)
+    jelly.counts["A/One.flac"] = 6  # two plays on Jellyfin, one on this Mac
+    actions = run(db, jelly, request(("P1", 5, f"{ROOT}/A/One.m4a")))
+    assert actions[0] == f"readd\tP1\t{ROOT}/A/One.m4a\t7"
+    assert not [a for a in actions if a.startswith(("plays", "refresh", "move"))]
+    assert jelly.counts["A/One.flac"] == 7
+    # next sync: the new entry (P9) is paired with the larger count, nothing is doubled
+    actions = run(db, jelly, request(("P9", 7, f"{ROOT}/A/One.m4a")))
+    assert not [a for a in actions if not a.startswith("info")]
+    assert jelly.counts["A/One.flac"] == 7
+
+
+def test_a_renamed_song_with_a_new_cover_is_re_added_at_its_new_path(db):
+    mirror(db, "One", "i1")
+    run(db, None, request(("P1", 1, f"{ROOT}/A/One.m4a")))
+    db.rename("A/One.flac", "A/Uno.flac")
+    track = db.get("A/Uno.flac")
+    track.target_rel = "A/Uno.m4a"
+    track.art_changed = 4_000_000_000.0
+    db.save(track)
+    assert run(db, None, request(("P1", 1, ""))) == [f"readd\tP1\t{ROOT}/A/Uno.m4a\t1"]

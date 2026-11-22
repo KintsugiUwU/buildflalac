@@ -548,6 +548,18 @@ class Engine:
         written = track.lyrics_hash if track else None
         return any(self._file_hash(side) != written for side in self._sidecars(target_rel))
 
+    def _art_hash(self, track: Track | None) -> str | None:
+        """The cover the copy has now: as recorded, else read from it (rows from before
+        covers were recorded). None when there is no copy to compare with."""
+        if track is None or not track.target_rel:
+            return None
+        if track.art_hash is not None:
+            return track.art_hash
+        try:
+            return media.read_tags(self.s.target / track.target_rel).art_hash()
+        except Exception:
+            return None
+
     def _encode(self, sf: SourceFile) -> None:
         audio = media.facts(sf.path)
         if audio is None:
@@ -561,6 +573,7 @@ class Engine:
         tags = media.read_tags(sf.path)
         locked = self._detect_edit(previous, target_rel)
         chosen = self._lyrics_for(sf, tags, audio.seconds, target_rel, locked, previous)
+        old_art = self._art_hash(previous)  # before the copy is replaced
         self.status["current"] = sf.rel
         tmp = encode.temp_path(target)
         try:
@@ -575,6 +588,10 @@ class Engine:
             self._remove_target(previous.target_rel, keep_lyrics=True)
         written = previous.lyrics_hash if previous else None
         lyrics_hash = self._write_sidecar(target_rel, chosen, locked, written)
+        art_hash = tags.art_hash()
+        art_changed = previous.art_changed if previous else 0.0
+        if old_art is not None and old_art != art_hash:
+            art_changed = time.time()
         self.db.save(
             Track(
                 sf.rel,
@@ -593,6 +610,8 @@ class Engine:
                 int(chosen.retry),
                 time.time(),
                 self._lyrics_stat(target_rel, chosen.source),
+                art_hash,
+                art_changed,
             )
         )
         self.db.event("encoded", sf.rel, chosen.source)
@@ -617,8 +636,14 @@ class Engine:
             and target.is_file()
         )
         if not same:
+            old_art = self._art_hash(track)
             media.write_tags(target, tags, chosen.text)
             track.changed = time.time()
+            # A new cover needs more than a refresh in Music: it keeps showing (and syncing to
+            # iPods) the cover it cached. The Mac library re-adds such songs instead.
+            track.art_hash = tags.art_hash()
+            if old_art is not None and old_art != track.art_hash:
+                track.art_changed = track.changed
         track.lyrics_hash = self._write_sidecar(track.target_rel, chosen, locked, track.lyrics_hash)
         track.lyrics_locked = int(locked)
         track.size, track.mtime, track.tag_hash = sf.size, sf.mtime, fingerprint

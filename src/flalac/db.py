@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS tracks (
     updated REAL NOT NULL,
     lyrics_retry INTEGER NOT NULL DEFAULT 0,    -- LRCLIB was unreachable; ask again later
     changed REAL NOT NULL DEFAULT 0,            -- when the copy's audio or tags last changed
-    lyrics_stat TEXT                            -- change stamp and size of the lyrics file
+    lyrics_stat TEXT,                           -- change stamp and size of the lyrics file
+    art_hash TEXT,                              -- hash of the cover in the copy (NULL: not known)
+    art_changed REAL NOT NULL DEFAULT 0         -- when the copy's cover last changed
 );
 CREATE INDEX IF NOT EXISTS tracks_identity ON tracks(identity);
 CREATE TABLE IF NOT EXISTS lyrics_cache (
@@ -72,6 +74,8 @@ class Track:
     lyrics_retry: int = 0
     changed: float = 0.0  # 0 in rows from before this column: `updated` stands in
     lyrics_stat: str | None = None  # the lyrics file as last seen, to spot edits without reading
+    art_hash: str | None = None  # None in rows from before this column: the first write sets it
+    art_changed: float = 0.0  # when the cover changed; the Mac library then re-adds the song
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,14 +83,18 @@ class MacMemory:
     identity: str
     agreed: int
     last_music: int
-    last_jelly: int
+    last_jelly: int  # UNPAIRED: the track was not in Jellyfin; the first pairing takes the larger
 
+
+UNPAIRED = -1
 
 # Columns added after the first release, with their SQL definition.
 MIGRATIONS = {
     "lyrics_retry": "INTEGER NOT NULL DEFAULT 0",
     "changed": "REAL NOT NULL DEFAULT 0",
     "lyrics_stat": "TEXT",
+    "art_hash": "TEXT",
+    "art_changed": "REAL NOT NULL DEFAULT 0",
 }
 
 

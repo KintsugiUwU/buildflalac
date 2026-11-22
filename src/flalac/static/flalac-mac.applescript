@@ -2,7 +2,7 @@
 --
 -- Keeps this Mac's Music app (or iTunes) in step with the flalac mirror on the NAS: adds new
 -- songs, removes deleted ones, follows renamed ones without losing their plays, refreshes
--- retagged ones, and syncs play counts with Jellyfin. flalac makes every decision; this script
+-- retagged ones (re-adds those with a new cover), and syncs play counts with Jellyfin. flalac makes every decision; this script
 -- only reads the library, sends it, and applies the answer.
 --
 -- Works with iTunes on Mac OS X 10.4 and later, and with the Music app. Save it from Script
@@ -113,6 +113,7 @@ on applyAnswer(appName, reply)
 	set moves to {}
 	set refreshes to {}
 	set plays to {}
+	set readds to {}
 	set infos to {}
 	set AppleScript's text item delimiters to tab
 	repeat with ln in paragraphs of reply
@@ -129,6 +130,8 @@ on applyAnswer(appName, reply)
 				set end of refreshes to item 2 of parts
 			else if k is "plays" then
 				set end of plays to {item 2 of parts, (item 3 of parts) as integer}
+			else if k is "readd" then
+				set end of readds to {item 2 of parts, POSIX file (item 3 of parts), (item 4 of parts) as integer}
 			else if k is "info" then
 				set end of infos to item 2 of parts
 			end if
@@ -136,12 +139,20 @@ on applyAnswer(appName, reply)
 	end repeat
 	set AppleScript's text item delimiters to ""
 
-	set code to "on run {adds, removes, moves, refreshes, plays}
+	set code to "on run {adds, removes, moves, refreshes, plays, readds}
 	set failed to 0
 	set files_ to {}
 	repeat with f in adds
 		try
 			set end of files_ to ((contents of f) as alias)
+		on error
+			set failed to failed + 1
+		end try
+	end repeat
+	set again to {}
+	repeat with r in readds
+		try
+			set end of again to {item 1 of r, (item 2 of r) as alias, item 3 of r}
 		on error
 			set failed to failed + 1
 		end try
@@ -177,11 +188,21 @@ on applyAnswer(appName, reply)
 					set failed to failed + 1
 				end try
 			end repeat
+			-- A new cover: Music keeps the one it cached unless the song is added anew
+			repeat with r in again
+				try
+					delete (first file track of lp whose persistent ID is (item 1 of r))
+					set t to add (item 2 of r) to lp
+					set played count of t to (item 3 of r)
+				on error
+					set failed to failed + 1
+				end try
+			end repeat
 			if files_ is not {} then add files_ to lp
 		end timeout
 	end tell
 	return failed
 end run"
-	set failed to run script code with parameters {adds, removes, moves, refreshes, plays}
-	return {count of adds, count of removes, count of moves, count of refreshes, count of plays, failed, infos}
+	set failed to run script code with parameters {adds, removes, moves, refreshes, plays, readds}
+	return {count of adds, count of removes, count of moves, (count of refreshes) + (count of readds), count of plays, failed, infos}
 end applyAnswer

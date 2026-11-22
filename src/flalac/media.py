@@ -97,6 +97,15 @@ class Tags:
             digest.update(hashlib.sha1(art.data).digest())
         return digest.hexdigest()
 
+    def art_hash(self) -> str:
+        """Stable hash of the cover art alone ('' without any)."""
+        if not self.pictures:
+            return ""
+        digest = hashlib.sha1()
+        for art in self.pictures:
+            digest.update(hashlib.sha1(art.data).digest())
+        return digest.hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class AudioFacts:

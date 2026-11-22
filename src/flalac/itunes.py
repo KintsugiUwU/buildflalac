@@ -1,7 +1,8 @@
 """Keeps the iTunes (or Music) library in step with the copy on the drive, from the Mac app.
 
 The decisions are the ones the Mac script gets from the server (macsync.MacSync): add new songs,
-remove deleted ones, re-point renamed ones, refresh retagged ones, and merge play counts with
+remove deleted ones, re-point renamed ones, refresh retagged ones (re-add those with a new
+cover), and merge play counts with
 Jellyfin. Here they run on the Mac itself and are applied through AppleScript, in batches.
 iTunes is preferred when installed (for example iTunes 11.4 through Retroactive), so the
 library on the drive stays in the format every Mac of the group can open.
@@ -21,7 +22,14 @@ from .jellyfin import Jellyfin
 from .macsync import MacSync, MacTrack, Request, nfc
 
 ADD_BATCH = 100
-COUNTED = {"remove": "removed", "move": "moved", "refresh": "refreshed", "plays": "plays"}
+# A re-added song (new cover) counts as refreshed: to the person it is the same song, updated
+COUNTED = {
+    "remove": "removed",
+    "move": "moved",
+    "refresh": "refreshed",
+    "readd": "refreshed",
+    "plays": "plays",
+}
 
 READ = """on run argv
 	set out to {}
@@ -46,7 +54,11 @@ READ = """on run argv
 end run
 """
 
-APPLY = """on run argv
+APPLY = """on aliasOf(p)
+	return (POSIX file p) as alias
+end aliasOf
+
+on run argv
 	set txt to read (POSIX file (item 1 of argv)) as «class utf8»
 	set failed to 0
 	set AppleScript's text item delimiters to tab
@@ -67,6 +79,12 @@ APPLY = """on run argv
 							refresh t
 						else if k is "plays" then
 							set played count of t to ((item 3 of parts) as integer)
+						else if k is "readd" then
+							-- new cover: Music keeps its cached one unless the song is re-added
+							set f to my aliasOf(item 3 of parts)
+							delete t
+							set t to add f to lp
+							set played count of t to ((item 4 of parts) as integer)
 						end if
 					on error
 						set failed to failed + 1

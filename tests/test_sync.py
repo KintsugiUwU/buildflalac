@@ -691,3 +691,62 @@ def test_no_lyrics_list_matches_accented_names_in_either_form(workspace, make_en
     engine = make_engine(FakeLrclib({("First", found["artistName"]): [words]}))
     engine.run_pass()
     assert engine.db.get(f"{ALBUM}/{name}.flac").lyrics_source == "none"
+
+
+def _new_cover(flac: Path) -> None:
+    from mutagen.flac import Picture
+
+    tags = FLAC(flac)
+    tags.clear_pictures()
+    picture = Picture()
+    picture.type, picture.mime, picture.data = 3, "image/png", tiny_png((30, 30, 200))
+    tags.add_picture(picture)
+    tags.save()
+
+
+def test_a_new_cover_is_recorded_for_the_mac_library(workspace, make_engine):
+    source, target, _ = workspace
+    flac = song(source)
+    engine = make_engine()
+    engine.run_pass()
+    rel = f"{ALBUM}/01 First.flac"
+    assert engine.db.get(rel).art_hash and engine.db.get(rel).art_changed == 0
+    tags = FLAC(flac)
+    tags["TITLE"] = "First (Remastered)"  # other tags only: a refresh is enough
+    tags.save()
+    engine.run_pass()
+    assert engine.db.get(rel).art_changed == 0
+    _new_cover(flac)
+    engine.run_pass()
+    track = engine.db.get(rel)
+    assert track.art_changed == track.changed > 0
+    assert bytes(MP4(target / ALBUM / "01 First.m4a")["covr"][0]) == tiny_png((30, 30, 200))
+
+
+def test_a_new_cover_is_noticed_in_rows_from_before_covers_were_recorded(workspace, make_engine):
+    source, _, _ = workspace
+    flac = song(source)
+    engine = make_engine()
+    engine.run_pass()
+    rel = f"{ALBUM}/01 First.flac"
+    track = engine.db.get(rel)
+    track.art_hash = None  # as written by flalac 0.4.2
+    engine.db.save(track)
+    _new_cover(flac)
+    engine.run_pass()
+    assert engine.db.get(rel).art_changed > 0
+
+
+def test_a_moved_song_with_a_new_cover_is_noticed(workspace, make_engine):
+    source, _, _ = workspace
+    flac = song(source)
+    engine = make_engine()
+    engine.run_pass()
+    new_dir = source / "Pola & Bryson" / "Other Album"
+    new_dir.mkdir()
+    moved = new_dir / "09 First.flac"
+    os.rename(flac, moved)
+    _new_cover(moved)
+    plan = engine.run_pass()
+    assert len(plan.moves) == 1
+    assert engine.db.get("Pola & Bryson/Other Album/09 First.flac").art_changed > 0
