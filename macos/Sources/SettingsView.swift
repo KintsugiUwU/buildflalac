@@ -97,7 +97,8 @@ struct SettingsView: View {
                 Toggle("Decorate the window on holidays", isOn: $decorationsOn)
             }
             Row("") {
-                Note("Christmas, New Year, Easter, Halloween and the first day of each season. "
+                Note("Holidays from around the year (Christmas, Carnival, Easter, Lunar New Year, "
+                    + "Eid al-Fitr, Halloween…) and the first day of each season. "
                     + "With Reduce motion on, they stand still.")
             }
         }

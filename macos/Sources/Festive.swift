@@ -14,6 +14,12 @@ enum Festivity: String, CaseIterable, Sendable {
     case summer
     case autumn
     case winter
+    case carnival
+    case valentine
+    case lunarNewYear
+    case eid
+    case earthDay
+    case deadDay
 
     var title: String {
         switch self {
@@ -25,6 +31,12 @@ enum Festivity: String, CaseIterable, Sendable {
         case .summer: return "First day of summer"
         case .autumn: return "First day of autumn"
         case .winter: return "First day of winter"
+        case .carnival: return "Carnival"
+        case .valentine: return "Valentine's Day"
+        case .lunarNewYear: return "Lunar New Year"
+        case .eid: return "Eid al-Fitr"
+        case .earthDay: return "Earth Day"
+        case .deadDay: return "Día de los Muertos"
         }
     }
 
@@ -41,22 +53,59 @@ enum Festivity: String, CaseIterable, Sendable {
                 return season
             }
         }
+        // Short holidays first: they win over the longer periods they can fall in
         if (month == 12 && day == 31) || (month == 1 && day == 1) {
             return .newYear
         }
+        if month == 2 && day == 14 {
+            return .valentine
+        }
+        if month == 4 && day == 22 {
+            return .earthDay
+        }
+        if isEid(date) {
+            return .eid
+        }
+        if isLunarNewYear(date) {
+            return .lunarNewYear
+        }
+        if let sunday = easterSunday(year, calendar: calendar) {
+            func around(_ from: Int, _ to: Int) -> Bool {
+                guard let first = calendar.date(byAdding: .day, value: from, to: sunday),
+                      let last = calendar.date(byAdding: .day, value: to, to: sunday) else { return false }
+                return today >= first && today <= last
+            }
+            if around(-52, -47) {  // Giovedì grasso to Martedì grasso
+                return .carnival
+            }
+            if around(-2, 1) {  // Good Friday to Easter Monday
+                return .easter
+            }
+        }
+        if month == 11 && day <= 2 {
+            return .deadDay
+        }
         if month == 12 || (month == 1 && day <= 6) {
             return .christmas
-        }
-        if let sunday = easterSunday(year, calendar: calendar),
-           let friday = calendar.date(byAdding: .day, value: -2, to: sunday),
-           let monday = calendar.date(byAdding: .day, value: 1, to: sunday),
-           today >= friday, today <= monday {
-            return .easter
         }
         if month == 10 && day >= 25 {
             return .halloween
         }
         return nil
+    }
+
+    /// The first three days of Shawwal, in the Umm al-Qura calendar.
+    static func isEid(_ date: Date) -> Bool {
+        let islamic = Calendar(identifier: .islamicUmmAlQura)
+        let parts = islamic.dateComponents([.month, .day], from: date)
+        return parts.month == 10 && (parts.day ?? 0) <= 3
+    }
+
+    /// The first three days of the first month of the Chinese year.
+    static func isLunarNewYear(_ date: Date) -> Bool {
+        let chinese = Calendar(identifier: .chinese)
+        let parts = chinese.dateComponents([.month, .day], from: date)
+        return parts.month == 1 && parts.isLeapMonth != true && (parts.day ?? 0) <= 3
     }
 
     /// When the decoration shows in a year, for the preview menu.
@@ -76,6 +125,28 @@ enum Festivity: String, CaseIterable, Sendable {
         case .spring, .summer, .autumn, .winter:
             guard let day = firstDay(of: year, calendar: calendar) else { return "?" }
             return format.string(from: day)
+        case .valentine: return "14 Feb"
+        case .earthDay: return "22 Apr"
+        case .deadDay: return "1 – 2 Nov"
+        case .carnival:
+            guard let sunday = Self.easterSunday(year, calendar: calendar),
+                  let thursday = calendar.date(byAdding: .day, value: -52, to: sunday),
+                  let tuesday = calendar.date(byAdding: .day, value: -47, to: sunday) else { return "?" }
+            return "\(format.string(from: thursday)) – \(format.string(from: tuesday))"
+        case .eid, .lunarNewYear:
+            // Search the year for the first day; only the preview menu asks
+            guard var day = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) else {
+                return "?"
+            }
+            var found: [Date] = []
+            while calendar.component(.year, from: day) == year {
+                let match = self == .eid ? Self.isEid(day) : Self.isLunarNewYear(day)
+                if match { found.append(day) }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+            guard let first = found.first, let last = found.last else { return "not this year" }
+            return "\(format.string(from: first)) – \(format.string(from: last))"
         }
     }
 
@@ -190,7 +261,19 @@ struct FestiveBackground: View {
                         .frame(width: 220, height: 220)
                         .position(x: space.size.width - 10, y: 10)
                 case .easter:
-                    EmptyView()
+                    Bunny(size: space.size, still: still)
+                case .carnival:
+                    Falling(kind: .confetti, count: 30, size: space.size, still: still)
+                case .valentine:
+                    Falling(kind: .heart, count: 12, size: space.size, still: still, rising: true)
+                case .lunarNewYear:
+                    Falling(kind: .envelope, count: 7, size: space.size, still: still)
+                case .eid:
+                    Stars(size: space.size, still: still)
+                case .earthDay:
+                    Falling(kind: .greenLeaf, count: 14, size: space.size, still: still)
+                case .deadDay:
+                    Falling(kind: .marigold, count: 16, size: space.size, still: still)
                 }
             }
         }
@@ -210,10 +293,21 @@ struct FestiveForeground: View {
             case .christmas:
                 FairyLights(width: space.size.width, still: still)
             case .easter:
-                Eggs(still: still)
-                    .position(x: space.size.width - 58, y: space.size.height - 16)
+                EasterEdges(size: space.size, still: still)
             case .halloween:
                 HalloweenEdges(size: space.size, still: still)
+            case .carnival:
+                CarnivalEdges(size: space.size, still: still)
+            case .lunarNewYear:
+                Lanterns(size: space.size, still: still)
+            case .eid:
+                Drawing(name: "crescent")
+                    .frame(width: 34, height: 34)
+                    .position(x: space.size.width - 30, y: 24)
+            case .earthDay:
+                EarthEdges(size: space.size, still: still)
+            case .deadDay:
+                DeadEdges(size: space.size, still: still)
             default:
                 EmptyView()
             }
@@ -323,7 +417,7 @@ private func loop(_ time: Double, every duration: Double, phase: Double = 0) -> 
 // MARK: - Falling things
 
 private enum FallingKind {
-    case snow, confetti, petal, leaf
+    case snow, confetti, petal, leaf, greenLeaf, marigold, heart, envelope
 }
 
 /// Flakes, confetti, petals or leaves drifting down behind the content, top to bottom.
@@ -332,6 +426,7 @@ private struct Falling: View {
     let count: Int
     let size: CGSize
     let still: Bool
+    var rising = false  // bottom to top (hearts)
     @State private var seeds: [FallSeed] = []
 
     var body: some View {
@@ -339,7 +434,7 @@ private struct Falling: View {
             ZStack {
                 ForEach(seeds) { seed in
                     FallingPiece(kind: kind, seed: seed)
-                        .rotationEffect(.degrees(still ? seed.spin / 4 : time * seed.spin / seed.duration))
+                        .rotationEffect(.degrees(spins ? (still ? seed.spin / 4 : time * seed.spin / seed.duration) : 0))
                         .position(position(of: seed, at: time))
                 }
             }
@@ -351,9 +446,13 @@ private struct Falling: View {
         }
     }
 
+    /// Hearts and envelopes stay upright; flakes, petals and leaves turn as they fall.
+    private var spins: Bool { kind != .heart && kind != .envelope }
+
     private func position(of seed: FallSeed, at time: Double) -> CGPoint {
         let height = Double(size.height) + 40
-        let fall = still ? seed.phase : loop(time, every: seed.duration, phase: seed.phase)
+        var fall = still ? seed.phase : loop(time, every: seed.duration, phase: seed.phase)
+        if rising { fall = 1 - fall }
         let sway = still ? 0 : sin(time * 2 * .pi / seed.swayPeriod + seed.phase * 6) * Double(seed.sway)
         return CGPoint(x: seed.x * size.width + CGFloat(sway), y: CGFloat(fall * height - 20))
     }
@@ -407,6 +506,32 @@ private struct FallingPiece: View {
             Leaf()
                 .fill(colors[seed.hue].opacity(0.85))
                 .frame(width: 10, height: 14)
+        case .greenLeaf:
+            let colors: [Color] = [
+                Color(red: 0.3, green: 0.65, blue: 0.25), Color(red: 0.45, green: 0.75, blue: 0.3),
+                Color(red: 0.2, green: 0.55, blue: 0.3), Color(red: 0.55, green: 0.8, blue: 0.35),
+                Color(red: 0.35, green: 0.6, blue: 0.2),
+            ]
+            Leaf()
+                .fill(colors[seed.hue].opacity(0.8))
+                .frame(width: 10, height: 14)
+        case .marigold:
+            let colors: [Color] = [
+                Color(red: 1.0, green: 0.55, blue: 0.0), Color(red: 1.0, green: 0.7, blue: 0.1),
+                Color(red: 0.95, green: 0.45, blue: 0.05), Color(red: 1.0, green: 0.62, blue: 0.05),
+                Color(red: 0.98, green: 0.78, blue: 0.2),
+            ]
+            Ellipse()
+                .fill(colors[seed.hue].opacity(0.85))
+                .frame(width: 7, height: 10)
+        case .heart:
+            Drawing(name: "heart")
+                .frame(width: 14, height: 14)
+                .opacity(0.7)
+        case .envelope:
+            Drawing(name: "envelope")
+                .frame(width: 16, height: 16)
+                .opacity(0.85)
         }
     }
 }
@@ -563,5 +688,215 @@ private struct Bats: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Easter
+
+/// Painted eggs with a chick bottom right, tulips bottom left.
+private struct EasterEdges: View {
+    let size: CGSize
+    let still: Bool
+
+    var body: some View {
+        ZStack {
+            HStack(alignment: .bottom, spacing: 4) {
+                Drawing(name: "chick").frame(width: 26, height: 26)
+                Eggs(still: still)
+            }
+            .position(x: size.width - 70, y: size.height - 16)
+            Ticking(still: still) { time in
+                HStack(alignment: .bottom, spacing: -4) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Drawing(name: "tulip")
+                            .frame(width: 22, height: 22)
+                            .rotationEffect(
+                                .degrees(sin(time * 1.1 + Double(index)) * 5),
+                                anchor: .bottom
+                            )
+                    }
+                }
+            }
+            .position(x: 40, y: size.height - 14)
+        }
+    }
+}
+
+/// A bunny hopping along the bottom, right to left (the way it faces), behind the content.
+private struct Bunny: View {
+    let size: CGSize
+    let still: Bool
+
+    var body: some View {
+        Ticking(still: still) { time in
+            let across = still ? 0.5 : loop(time, every: 16, phase: 0.3)
+            let hop = still ? 0 : abs(sin(time * .pi * 1.6)) * 16
+            Drawing(name: "rabbit")
+                .frame(width: 28, height: 28)
+                .opacity(0.85)
+                .position(
+                    x: size.width + 30 - CGFloat(across) * (size.width + 60),
+                    y: size.height - 50 - CGFloat(hop)
+                )
+        }
+    }
+}
+
+// MARK: - Carnival
+
+/// Masks top left and a party popper top right, rocking a little.
+private struct CarnivalEdges: View {
+    let size: CGSize
+    let still: Bool
+
+    var body: some View {
+        Ticking(still: still) { time in
+            ZStack {
+                Drawing(name: "masks")
+                    .frame(width: 30, height: 30)
+                    .rotationEffect(.degrees(-12 + sin(time * 1.2) * 6))
+                    .position(x: 22, y: 20)
+                Drawing(name: "popper")
+                    .frame(width: 28, height: 28)
+                    .rotationEffect(.degrees(sin(time * 1.5 + 1) * 6))
+                    .position(x: size.width - 22, y: 20)
+            }
+        }
+    }
+}
+
+// MARK: - Lunar New Year
+
+/// Red lanterns hanging from the top corners, swinging gently.
+private struct Lanterns: View {
+    let size: CGSize
+    let still: Bool
+
+    var body: some View {
+        Ticking(still: still) { time in
+            ZStack {
+                lantern(at: 18, thread: 4, time: time, phase: 0)
+                lantern(at: 46, thread: 14, time: time, phase: 1.3)
+                lantern(at: size.width - 22, thread: 8, time: time, phase: 2.1)
+            }
+        }
+    }
+
+    private func lantern(at x: CGFloat, thread: CGFloat, time: Double, phase: Double) -> some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.6))
+                .frame(width: 1, height: thread)
+            Drawing(name: "lantern")
+                .frame(width: 24, height: 24)
+        }
+        .rotationEffect(.degrees(sin(time * 1.4 + phase) * 7), anchor: .top)
+        .position(x: x, y: (thread + 24) / 2)
+    }
+}
+
+// MARK: - Eid al-Fitr
+
+/// Small stars twinkling in the upper part of the window, behind the content.
+private struct Stars: View {
+    let size: CGSize
+    let still: Bool
+    @State private var places: [CGPoint] = []
+
+    var body: some View {
+        Ticking(still: still) { time in
+            ZStack {
+                ForEach(places.indices, id: \.self) { index in
+                    let glow = still ? 0.8 : 0.35 + 0.65 * abs(sin(time * 0.9 + Double(index) * 1.7))
+                    Star()
+                        .fill(Color(red: 1.0, green: 0.82, blue: 0.3).opacity(glow))
+                        .frame(width: 9, height: 9)
+                        .position(x: places[index].x * size.width, y: places[index].y * size.height)
+                }
+            }
+        }
+        .onAppear {
+            if places.isEmpty {
+                places = (0..<12).map { _ in
+                    CGPoint(x: CGFloat.random(in: 0.05...0.85), y: CGFloat.random(in: 0.04...0.6))
+                }
+            }
+        }
+    }
+}
+
+/// A four-pointed star.
+private struct Star: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let inner = min(rect.width, rect.height) * 0.14
+        path.move(to: CGPoint(x: c.x, y: rect.minY))
+        path.addLine(to: CGPoint(x: c.x + inner, y: c.y - inner))
+        path.addLine(to: CGPoint(x: rect.maxX, y: c.y))
+        path.addLine(to: CGPoint(x: c.x + inner, y: c.y + inner))
+        path.addLine(to: CGPoint(x: c.x, y: rect.maxY))
+        path.addLine(to: CGPoint(x: c.x - inner, y: c.y + inner))
+        path.addLine(to: CGPoint(x: rect.minX, y: c.y))
+        path.addLine(to: CGPoint(x: c.x - inner, y: c.y - inner))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Earth Day
+
+/// The globe bottom right, with a sprout swaying beside it.
+private struct EarthEdges: View {
+    let size: CGSize
+    let still: Bool
+
+    var body: some View {
+        Ticking(still: still) { time in
+            HStack(alignment: .bottom, spacing: 2) {
+                Drawing(name: "sprout")
+                    .frame(width: 22, height: 22)
+                    .rotationEffect(.degrees(sin(time * 1.2) * 6), anchor: .bottom)
+                Drawing(name: "globe")
+                    .frame(width: 32, height: 32)
+                    .offset(y: CGFloat(sin(time * 1.0) * 2))
+            }
+            .position(x: size.width - 40, y: size.height - 20)
+        }
+    }
+}
+
+// MARK: - Día de los Muertos
+
+/// Candles flickering in the bottom corners, with marigolds.
+private struct DeadEdges: View {
+    let size: CGSize
+    let still: Bool
+
+    var body: some View {
+        Ticking(still: still) { time in
+            ZStack {
+                HStack(alignment: .bottom, spacing: 0) {
+                    candle(time: time, phase: 0, height: 28)
+                    Drawing(name: "blossom").frame(width: 20, height: 20)
+                    candle(time: time, phase: 2.2, height: 22)
+                }
+                .position(x: 40, y: size.height - 18)
+                HStack(alignment: .bottom, spacing: 0) {
+                    Drawing(name: "blossom").frame(width: 18, height: 18)
+                    candle(time: time, phase: 4.1, height: 26)
+                    Drawing(name: "blossom").frame(width: 22, height: 22)
+                }
+                .position(x: size.width - 40, y: size.height - 18)
+            }
+        }
+    }
+
+    private func candle(time: Double, phase: Double, height: CGFloat) -> some View {
+        let flicker = still ? 1 : 0.85 + 0.15 * sin(time * 9 + phase) * sin(time * 5.3 + phase * 2)
+        return Drawing(name: "candle")
+            .frame(width: height * 0.8, height: height)
+            .opacity(flicker)
+            .scaleEffect(x: 1, y: CGFloat(0.98 + 0.02 * flicker), anchor: .bottom)
     }
 }
