@@ -25,8 +25,14 @@ struct SummaryView: View {
                     }
                     notes(summary)
                     DisclosureGroup("Details", isExpanded: $showDetails) {
-                        counts(summary)
-                            .padding(.top, 6)
+                        VStack(alignment: .leading, spacing: 12) {
+                            counts(summary)
+                            SongList(
+                                songs: summary.songs + (summary.library?.songs ?? []),
+                                more: summary.songsMore + (summary.library?.songsMore ?? 0)
+                            )
+                        }
+                        .padding(.top, 6)
                     }
                 } else {
                     Text(headline)
@@ -100,6 +106,7 @@ struct SummaryView: View {
                     ("Re-pointed", library.moved),
                     ("Refreshed", library.refreshed),
                     ("Play counts set", library.plays),
+                    ("Saved in Jellyfin", library.jellyfin),
                 ])
             } else {
                 VStack(alignment: .leading, spacing: 4) {
@@ -187,6 +194,98 @@ private struct Counts: View {
                 }
             }
         }
+    }
+}
+
+/// The songs a sync changed, one line each, in a box that scrolls when the list is long.
+private struct SongList: View {
+    let songs: [SongChange]
+    let more: Int
+
+    private static let rowHeight: CGFloat = 19
+    private static let tallest: CGFloat = 220
+
+    var body: some View {
+        if songs.isEmpty {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Songs")
+                    .fontWeight(.semibold)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(songs.indices, id: \.self) { index in
+                            row(songs[index])
+                                .frame(height: Self.rowHeight, alignment: .leading)
+                        }
+                    }
+                }
+                // An explicit height: the window sizes itself to its content
+                .frame(height: min(CGFloat(songs.count) * Self.rowHeight, Self.tallest))
+                if more > 0 {
+                    Text("and \(Format.count(more)) more; the log lists every one.")
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .font(.callout)
+        }
+    }
+
+    private func row(_ change: SongChange) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(Self.label(change.kind))
+                .foregroundColor(change.kind == "failed" ? .red : .secondary)
+                .lineLimit(1)
+                .fixedSize()
+            Text(change.song)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
+            if let extra = Self.extra(change) {
+                Text(extra)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .help(Self.extra(change).map { "\(change.song): \($0)" } ?? change.song)
+    }
+
+    static func label(_ kind: String) -> String {
+        switch kind {
+        case "converted": return "Converted"
+        case "retagged": return "Retagged"
+        case "renamed": return "Renamed"
+        case "removed": return "Removed"
+        case "failed": return "Failed"
+        case "added": return "Added"
+        case "moved": return "Re-pointed"
+        case "refreshed": return "Refreshed"
+        case "readded": return "Re-added"
+        case "plays": return "Plays"
+        default: return kind.capitalized
+        }
+    }
+
+    /// "Music 3 → 5, Jellyfin 4 → 5" for play counts, the detail (an error, a former name)
+    /// otherwise.
+    static func extra(_ change: SongChange) -> String? {
+        if change.kind == "readded" {
+            return "new cover"
+        }
+        guard change.kind == "plays", let plays = change.plays else {
+            return change.detail
+        }
+        var sides: [String] = []
+        if let music = change.music, music != plays {
+            sides.append("Music \(music) → \(plays)")
+        }
+        if let jellyfin = change.jellyfin, jellyfin != plays {
+            sides.append("Jellyfin \(jellyfin) → \(plays)"
+                + (change.jellyfinFailed ? " (not saved yet)" : ""))
+        }
+        return sides.isEmpty ? nil : sides.joined(separator: ", ")
     }
 }
 

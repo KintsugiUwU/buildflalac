@@ -91,3 +91,26 @@ def test_confirm_deletes_takes_the_count_shown(tmp_path):
     assert parse(base).confirm_deletes is None
     assert parse([*base, "--confirm-deletes"]).confirm_deletes == -1
     assert parse([*base, "--confirm-deletes", "12"]).confirm_deletes == 12
+
+
+def test_the_summary_lists_the_songs(tmp_path, capsys):
+    source, target = tmp_path / "FLAC", tmp_path / "SSD" / "ALAC"
+    song = make_flac(source / "A" / "01 One.flac", tags=default_tags("One", 1))
+    os.utime(song, (1_000_000_000, 1_000_000_000))
+    args = ["sync", "--source", str(source), "--target", str(target), "--lyrics", "off"]
+    assert engine.main(args) == 0
+    summary = lines(capsys)[-1]
+    assert summary["songs"] == [{"kind": "converted", "song": "A/01 One"}]
+    assert summary["songs_more"] == 0
+
+
+def test_changes_are_described_for_the_log():
+    plays = {"kind": "plays", "song": "A/01 One", "music": 3, "jellyfin": 4, "plays": 5}
+    assert engine.describe(plays) == "Play count: A/01 One: Music 3 → 5, Jellyfin 4 → 5"
+    plays["music"] = 5
+    plays["jellyfin_failed"] = True
+    assert engine.describe(plays) == (
+        "Play count: A/01 One: Jellyfin 4 → 5 (Jellyfin not saved; retried next time)"
+    )
+    renamed = {"kind": "renamed", "song": "B/01 One", "detail": "from A/01 One"}
+    assert engine.describe(renamed) == "Renamed: B/01 One (from A/01 One)"

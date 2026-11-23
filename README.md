@@ -98,7 +98,9 @@ Needs `ffmpeg` on the PATH. Design rules for the UI are in [DESIGN.md](DESIGN.md
 choose the FLAC folder and the ALAC folder (for example on an external drive), press **Sync**,
 and it converts what changed, keeps the iTunes or Music library in step and syncs play counts
 with Jellyfin. Settings (⌘,) cover Jellyfin (the API key is kept in the Keychain), lyrics, songs
-that must not get lyrics, and ALAC quality. Everything is inside the app: Python, the engine and
+that must not get lyrics, and ALAC quality. After a sync, Details lists every song it converted,
+retagged, renamed or removed, the songs added to or changed in the library, and each play count
+with its value before and after, in Music and in Jellyfin. Everything is inside the app: Python, the engine and
 FFmpeg. Build it with `FLALAC_BUILD=engine packaging/build_mac_app.sh` then
 `ENGINE_DIR=packaging/dist/flalac-engine macos/build.sh`; see `macos/README.md`.
 

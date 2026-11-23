@@ -148,6 +148,46 @@ struct EngineProgress: Equatable, Sendable {
     var message: String?
 }
 
+/// One song a sync changed, as listed in a summary. `kind` is converted, retagged, renamed,
+/// removed or failed (the ALAC folder), or added, removed, moved, refreshed, readded or plays
+/// (the library). For plays: the counts before (`music`, `jellyfin`) and after (`plays`).
+struct SongChange: Codable, Equatable, Sendable {
+    var kind: String
+    var song: String
+    var detail: String?
+    var music: Int?
+    var jellyfin: Int?
+    var plays: Int?
+    var jellyfinFailed = false
+
+    enum CodingKeys: String, CodingKey {
+        case kind, song, detail, music, jellyfin, plays
+        case jellyfinFailed = "jellyfin_failed"
+    }
+
+    init(kind: String, song: String, detail: String? = nil, music: Int? = nil,
+         jellyfin: Int? = nil, plays: Int? = nil, jellyfinFailed: Bool = false) {
+        self.kind = kind
+        self.song = song
+        self.detail = detail
+        self.music = music
+        self.jellyfin = jellyfin
+        self.plays = plays
+        self.jellyfinFailed = jellyfinFailed
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try values.decodeIfPresent(String.self, forKey: .kind) ?? ""
+        song = try values.decodeIfPresent(String.self, forKey: .song) ?? ""
+        detail = try values.decodeIfPresent(String.self, forKey: .detail)
+        music = try values.decodeIfPresent(Int.self, forKey: .music)
+        jellyfin = try values.decodeIfPresent(Int.self, forKey: .jellyfin)
+        plays = try values.decodeIfPresent(Int.self, forKey: .plays)
+        jellyfinFailed = try values.decodeIfPresent(Bool.self, forKey: .jellyfinFailed) ?? false
+    }
+}
+
 /// The `library` part of a summary.
 struct LibrarySummary: Codable, Equatable, Sendable {
     var app: String
@@ -157,9 +197,20 @@ struct LibrarySummary: Codable, Equatable, Sendable {
     var refreshed = 0
     var plays = 0
     var failed = 0
+    /// Play counts saved in Jellyfin.
+    var jellyfin = 0
+    /// The changes song by song (at most 500; `songsMore` counts the rest).
+    var songs: [SongChange] = []
+    var songsMore = 0
+
+    enum CodingKeys: String, CodingKey {
+        case app, added, removed, moved, refreshed, plays, failed, jellyfin, songs
+        case songsMore = "songs_more"
+    }
 
     init(app: String, added: Int = 0, removed: Int = 0, moved: Int = 0, refreshed: Int = 0,
-         plays: Int = 0, failed: Int = 0) {
+         plays: Int = 0, failed: Int = 0, jellyfin: Int = 0, songs: [SongChange] = [],
+         songsMore: Int = 0) {
         self.app = app
         self.added = added
         self.removed = removed
@@ -167,6 +218,9 @@ struct LibrarySummary: Codable, Equatable, Sendable {
         self.refreshed = refreshed
         self.plays = plays
         self.failed = failed
+        self.jellyfin = jellyfin
+        self.songs = songs
+        self.songsMore = songsMore
     }
 
     /// Missing counts are read as 0, so an engine that adds or drops a field still works.
@@ -179,10 +233,14 @@ struct LibrarySummary: Codable, Equatable, Sendable {
         refreshed = try values.decodeIfPresent(Int.self, forKey: .refreshed) ?? 0
         plays = try values.decodeIfPresent(Int.self, forKey: .plays) ?? 0
         failed = try values.decodeIfPresent(Int.self, forKey: .failed) ?? 0
+        jellyfin = try values.decodeIfPresent(Int.self, forKey: .jellyfin) ?? 0
+        songs = try values.decodeIfPresent([SongChange].self, forKey: .songs) ?? []
+        songsMore = try values.decodeIfPresent(Int.self, forKey: .songsMore) ?? 0
     }
 
     var changedNothing: Bool {
         added == 0 && removed == 0 && moved == 0 && refreshed == 0 && plays == 0 && failed == 0
+            && jellyfin == 0
     }
 }
 
@@ -198,15 +256,21 @@ struct SyncSummary: Codable, Equatable, Sendable {
     var seconds = 0.0
     var library: LibrarySummary?
     var notes: [String] = []
+    /// The ALAC folder's changes song by song (at most 500; `songsMore` counts the rest).
+    var songs: [SongChange] = []
+    var songsMore = 0
 
     enum CodingKeys: String, CodingKey {
         case converted, retagged, renamed, removed, errors, unsettled, seconds, library, notes
+        case songs
         case heldDeletes = "held_deletes"
+        case songsMore = "songs_more"
     }
 
     init(converted: Int = 0, retagged: Int = 0, renamed: Int = 0, removed: Int = 0,
          errors: Int = 0, unsettled: Int = 0, heldDeletes: Int = 0, seconds: Double = 0,
-         library: LibrarySummary? = nil, notes: [String] = []) {
+         library: LibrarySummary? = nil, notes: [String] = [], songs: [SongChange] = [],
+         songsMore: Int = 0) {
         self.converted = converted
         self.retagged = retagged
         self.renamed = renamed
@@ -217,6 +281,8 @@ struct SyncSummary: Codable, Equatable, Sendable {
         self.seconds = seconds
         self.library = library
         self.notes = notes
+        self.songs = songs
+        self.songsMore = songsMore
     }
 
     init(from decoder: Decoder) throws {
@@ -231,6 +297,8 @@ struct SyncSummary: Codable, Equatable, Sendable {
         seconds = try values.decodeIfPresent(Double.self, forKey: .seconds) ?? 0
         library = try values.decodeIfPresent(LibrarySummary.self, forKey: .library)
         notes = try values.decodeIfPresent([String].self, forKey: .notes) ?? []
+        songs = try values.decodeIfPresent([SongChange].self, forKey: .songs) ?? []
+        songsMore = try values.decodeIfPresent(Int.self, forKey: .songsMore) ?? 0
     }
 
     var changedNothing: Bool {
@@ -248,6 +316,9 @@ struct SyncSummary: Codable, Equatable, Sendable {
         result.renamed += renamed
         result.removed += removed
         result.seconds += seconds
+        // Failed songs are listed again by every run: the later run's list is the current one
+        result.songs = songs.filter { $0.kind != "failed" } + later.songs
+        result.songsMore = songsMore + later.songsMore
         if let first = library {
             if var second = later.library {
                 second.added += first.added
@@ -255,6 +326,9 @@ struct SyncSummary: Codable, Equatable, Sendable {
                 second.moved += first.moved
                 second.refreshed += first.refreshed
                 second.plays += first.plays
+                second.jellyfin += first.jellyfin
+                second.songs = first.songs + second.songs
+                second.songsMore += first.songsMore
                 result.library = second
             } else {
                 result.library = first
@@ -334,6 +408,9 @@ enum EngineMessage: Equatable, Sendable {
         }
     }
 
+    /// The fields of every message type at once. A key one type uses with another meaning
+    /// (`songs` is a number in `jellyfin` and a list in `summary`) must not fail the line, so
+    /// every field but `type` is read leniently.
     private struct Envelope: Decodable {
         var type: String
         var stage: String?
@@ -346,5 +423,24 @@ enum EngineMessage: Equatable, Sendable {
         var songs: Int?
         var plays: Int?
         var version: String?
+
+        enum CodingKeys: String, CodingKey {
+            case type, stage, done, total, current, message, count, ok, songs, plays, version
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            type = try values.decode(String.self, forKey: .type)
+            stage = try? values.decodeIfPresent(String.self, forKey: .stage)
+            done = try? values.decodeIfPresent(Int.self, forKey: .done)
+            total = try? values.decodeIfPresent(Int.self, forKey: .total)
+            current = try? values.decodeIfPresent(String.self, forKey: .current)
+            message = try? values.decodeIfPresent(String.self, forKey: .message)
+            count = try? values.decodeIfPresent(Int.self, forKey: .count)
+            ok = try? values.decodeIfPresent(Bool.self, forKey: .ok)
+            songs = try? values.decodeIfPresent(Int.self, forKey: .songs)
+            plays = try? values.decodeIfPresent(Int.self, forKey: .plays)
+            version = try? values.decodeIfPresent(String.self, forKey: .version)
+        }
     }
 }

@@ -47,7 +47,10 @@ on run
 		repeat with i from 1 to 6
 			set item i of totals to (item i of totals) + (item i of done)
 		end repeat
-		set notes to item 7 of done
+		-- Notes of both passes, each once
+		repeat with n in item 7 of done
+			if notes does not contain {contents of n} then set end of notes to (contents of n)
+		end repeat
 		-- Songs added in the first pass get their play counts paired in a second one
 		if item 1 of done is 0 then exit repeat
 	end repeat

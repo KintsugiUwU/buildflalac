@@ -67,6 +67,11 @@ class SourceMissingError(RuntimeError):
     pass
 
 
+def song_name(rel: str) -> str:
+    """A song as people read it in a summary: its path without the extension."""
+    return str(Path(rel).with_suffix("")) if Path(rel).suffix else rel
+
+
 def text_hash(text: str) -> str:
     return hashlib.sha1(text.encode()).hexdigest()
 
@@ -111,6 +116,8 @@ class Engine:
         self._confirm_count: int | None = None
         self._skipped: set[str] = set()
         self._lrclib_paused_until = 0.0
+        # What the last pass did, song by song: {"kind", "song", optional "detail"}
+        self.done: list[dict[str, str]] = []
 
     # ---------------------------------------------------------------- lyrics style
     @property
@@ -342,6 +349,7 @@ class Engine:
             return None
         try:
             self.status.update(phase="scanning", current="")
+            self.done = []
             try:
                 self._apply_no_lyrics_changes()
                 plan = self.scan()
@@ -411,6 +419,7 @@ class Engine:
         except Exception as error:  # one bad file must not stop the pass
             message = f"{type(error).__name__}: {error}"[:500]
             self.db.event("error", rel, message)
+            self._did("failed", rel, message)  # also a new song, which has no row to mark
             track = self.db.get(rel)
             if track is not None:
                 track.status, track.error = "error", message
@@ -615,6 +624,7 @@ class Engine:
             )
         )
         self.db.event("encoded", sf.rel, chosen.source)
+        self._did("converted", sf.rel)
 
     def _retag(self, sf: SourceFile) -> None:
         track = self.db.get(sf.rel)
@@ -652,6 +662,8 @@ class Engine:
         track.lyrics_stat = self._lyrics_stat(track.target_rel, chosen.source)
         self.db.save(track)
         self.db.event("retagged" if not same else "checked", sf.rel, chosen.source)
+        if not same:
+            self._did("retagged", sf.rel)
 
     def _move(self, old: str, sf: SourceFile) -> None:
         track = self.db.get(old)
@@ -678,6 +690,7 @@ class Engine:
         track.lyrics_stat = self._lyrics_stat(new_rel, track.lyrics_source)  # renamed with it
         self.db.save(track)
         self.db.event("moved", sf.rel, f"from {old}")
+        self._did("renamed", sf.rel, f"from {song_name(old)}")
         if changed:
             self._retag(sf)
 
@@ -687,6 +700,13 @@ class Engine:
             self._remove_target(track.target_rel)
         self.db.delete(rel)
         self.db.event("deleted", rel)
+        self._did("removed", rel)
+
+    def _did(self, kind: str, rel: str, detail: str = "") -> None:
+        entry = {"kind": kind, "song": song_name(rel)}
+        if detail:
+            entry["detail"] = detail
+        self.done.append(entry)  # list.append is atomic: the conversion workers share it
 
     def _remove_target(self, target_rel: str, keep_lyrics: bool = False) -> None:
         target = self.s.target / target_rel

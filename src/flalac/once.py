@@ -10,11 +10,11 @@ import shutil
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .config import Settings
 from .db import Database
-from .sync import Engine, Plan
+from .sync import Engine, Plan, song_name
 
 
 class OnceError(RuntimeError):
@@ -31,6 +31,8 @@ class Summary:
     unsettled: int
     held_deletes: int  # deletions not confirmed; nothing was deleted
     seconds: float
+    # Song by song: {"kind": converted|retagged|renamed|removed|failed, "song", "detail"?}
+    songs: list[dict[str, str]] = field(default_factory=list)
 
     def text(self) -> str:
         parts = [
@@ -80,22 +82,49 @@ def run(
         engine = Engine(settings, db)
         engine.remove_stale_temp_files()
         plan = _pass(engine, progress, every)
+        songs = list(engine.done)
         held = len(engine._held) if plan.held_deletes else 0
         if held and confirm_deletes(held):
             engine.confirm_deletes(held)  # exactly these; more vanishing meanwhile are held
-            again = _pass(engine, progress, every)
-            plan.deletes.extend(again.deletes)
+            _pass(engine, progress, every)
+            songs += engine.done
             held = 0
-        errors = sum(1 for t in db.tracks().values() if t.status == "error")
+        # Failed now (new songs have no row to mark) or still failing from an earlier run
+        failed = {x["song"]: x for x in songs if x["kind"] == "failed"}
+        for t in sorted(db.tracks().values(), key=lambda t: t.rel):
+            if t.status == "error" and song_name(t.rel) not in failed:
+                failed[song_name(t.rel)] = {
+                    "kind": "failed",
+                    "song": song_name(t.rel),
+                    "detail": t.error or "",
+                }
+        songs = [x for x in songs if x["kind"] != "failed"] + list(failed.values())
+
+        def count(kind: str) -> int:
+            return sum(1 for song in songs if song["kind"] == kind)
+
+        if settings.dry_run:  # nothing was done: say what would be
+            return Summary(
+                len(plan.encode),
+                len(plan.retag),
+                len(plan.moves),
+                len(plan.deletes),
+                count("failed"),
+                plan.unsettled,
+                held,
+                time.monotonic() - started,
+            )
+
         return Summary(
-            len(plan.encode),
-            len(plan.retag),
-            len(plan.moves),
-            len(plan.deletes),
-            errors,
+            count("converted"),
+            count("retagged"),
+            count("renamed"),
+            count("removed"),
+            count("failed"),
             plan.unsettled,
             held,
             time.monotonic() - started,
+            songs,
         )
     finally:
         db.close()

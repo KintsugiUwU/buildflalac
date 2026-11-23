@@ -227,3 +227,123 @@ def test_a_renamed_song_with_a_new_cover_is_re_added_at_its_new_path(db):
     track.art_changed = 4_000_000_000.0
     db.save(track)
     assert run(db, None, request(("P1", 1, ""))) == [f"readd\tP1\t{ROOT}/A/Uno.m4a\t1"]
+
+
+def test_each_change_is_listed_with_the_play_counts_before_and_after(db):
+    mirror(db, "One", "i1")
+    mirror(db, "Two", "i2")
+    jelly = FakeJellyfin({"A/One.flac": 4, "A/Two.flac": 1})
+    syncer = MacSync(Settings(), db, jelly)
+    syncer.sync(
+        parse_request(request(("P1", 3, f"{ROOT}/A/One.m4a"), ("P9", 0, f"{ROOT}/A/Gone.m4a")))
+    )
+    assert syncer.changes == [
+        {"kind": "plays", "song": "A/One", "music": 3, "jellyfin": 4, "plays": 4},
+        {"kind": "removed", "song": "A/Gone"},
+        {"kind": "added", "song": "A/Two"},
+    ]
+    assert syncer.jellyfin_updated == 0
+    jelly.counts["A/One.flac"] = 5
+    syncer.sync(parse_request(request(("P1", 6, f"{ROOT}/A/One.m4a"))))
+    assert syncer.changes[0] == {
+        "kind": "plays",
+        "song": "A/One",
+        "music": 6,
+        "jellyfin": 5,
+        "plays": 7,
+    }
+    assert syncer.jellyfin_updated == 1
+
+
+def test_a_failed_jellyfin_save_is_marked(db):
+    mirror(db, "One", "i1")
+    jelly = FakeJellyfin({"A/One.flac": 1})
+    jelly.fail = True
+    syncer = MacSync(Settings(), db, jelly)
+    syncer.sync(parse_request(request(("P1", 3, f"{ROOT}/A/One.m4a"))))
+    assert syncer.changes[0]["jellyfin_failed"] is True
+    assert syncer.jellyfin_updated == 0
+
+
+class FakeMusic:
+    """The Music app as itunes.py drives it: persistent IDs to paths and play counts."""
+
+    def __init__(self) -> None:
+        self.tracks: dict[str, tuple[str, int]] = {}
+        self.next = 1
+
+    def run(self, script: str, app: str, payload: str | None = None) -> str:
+        from flalac import itunes
+
+        if script is itunes.READ:
+            return "\n".join(f"{pid}\t{n}\t{p}" for pid, (p, n) in self.tracks.items())
+        if script is itunes.ADD:
+            for path in filter(None, (payload or "").split("\n")):
+                self.tracks[f"N{self.next}"] = (path, 0)
+                self.next += 1
+            return "0"
+        for line in (payload or "").split("\n"):
+            kind, pid, *rest = line.split("\t")
+            path, plays = self.tracks[pid]
+            if kind == "plays":
+                self.tracks[pid] = (path, int(rest[0]))
+        return "0"
+
+
+def test_the_library_sync_keeps_notes_and_changes_of_both_rounds(db, tmp_path, monkeypatch):
+    import dataclasses
+
+    from flalac import itunes
+
+    mirror(db, "One", "i1")
+    mirror(db, "Two", "i2")
+    music = FakeMusic()
+    music.tracks["P1"] = (f"{ROOT}/A/One.m4a", 2)
+    jelly = FakeJellyfin({"A/One.flac": 5, "A/Two.flac": 3})
+    monkeypatch.setattr(itunes, "_run", music.run)
+    monkeypatch.setattr(itunes.Jellyfin, "from_settings", staticmethod(lambda s: jelly))
+    settings = dataclasses.replace(Settings(), target=Path(ROOT))
+    result = itunes.sync_library(settings, db, "MacBook", app="Music")
+    kinds = [(c["kind"], c["song"]) for c in result.changes]
+    # round 1: P1 paired, Two added; round 2: the new entry for Two gets Jellyfin's count
+    assert kinds == [("plays", "A/One"), ("added", "A/Two"), ("plays", "A/Two")]
+    assert (result.added, result.plays, result.jellyfin) == (1, 2, 0)
+    assert music.tracks["N1"] == (f"{ROOT}/A/Two.m4a", 3)
+    jelly.counts["A/One.flac"] = 6
+    music.tracks["P1"] = (f"{ROOT}/A/One.m4a", 6)
+    music.tracks["N1"] = (f"{ROOT}/A/Two.m4a", 4)
+    mirror(db, "Three", "i3")  # an add: a second round runs after Jellyfin was updated
+    result = itunes.sync_library(settings, db, "MacBook", app="Music")
+    assert result.added == 1 and result.jellyfin == 2
+    assert result.notes == ["2 play counts updated in Jellyfin"]
+
+
+def test_a_jellyfin_save_retried_in_the_second_round_is_listed_once(db, monkeypatch):
+    import dataclasses
+
+    from flalac import itunes
+
+    mirror(db, "One", "i1")
+    music = FakeMusic()
+    music.tracks["P1"] = (f"{ROOT}/A/One.m4a", 5)
+    jelly = FakeJellyfin({"A/One.flac": 2})
+    real_save = jelly.set_play_count
+    calls = []
+
+    def flaky(item_id, plays):
+        calls.append(plays)
+        if len(calls) == 1:
+            raise JellyfinError("down")
+        real_save(item_id, plays)
+
+    jelly.set_play_count = flaky
+    monkeypatch.setattr(itunes, "_run", music.run)
+    monkeypatch.setattr(itunes.Jellyfin, "from_settings", staticmethod(lambda s: jelly))
+    mirror(db, "Two", "i2")  # an add, so a second round runs and retries the save
+    result = itunes.sync_library(
+        dataclasses.replace(Settings(), target=Path(ROOT)), db, "MacBook", app="Music"
+    )
+    one = [c for c in result.changes if c["song"] == "A/One"]
+    assert len(one) == 1 and not one[0].get("jellyfin_failed")
+    assert jelly.counts["A/One.flac"] == 5
+    assert result.notes == ["1 play counts updated in Jellyfin"]

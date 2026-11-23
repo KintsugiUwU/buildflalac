@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from .config import Settings
 from .db import UNPAIRED, Database, MacMemory, Track
 from .jellyfin import Jellyfin, JellyfinError
+from .sync import song_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,12 @@ class MacSync:
         self.s = settings
         self.db = db
         self.jellyfin = jellyfin
+        # What the last sync changed, song by song, for the summary and the log:
+        # {"kind": added|removed|moved|refreshed|readded|plays, "song", and for plays
+        # "music" and "jellyfin" (the counts before; "jellyfin" absent without Jellyfin) and
+        # "plays" (the count both sides have now)}
+        self.changes: list[dict] = []
+        self.jellyfin_updated = 0
 
     def sync(self, request: Request) -> list[str]:
         root = request.root
@@ -105,6 +112,8 @@ class MacSync:
                 jelly = {}
 
         actions: list[str] = []
+        changes: list[dict] = []
+        plays_changes: dict[str, dict] = {}  # by persistent ID, to mark failed Jellyfin saves
         seen: set[str] = set()
         new_memory: dict[str, MacMemory] = {}
         jelly_updates: list[tuple[str, str, int, int]] = []  # pid, item id, old, new
@@ -123,20 +132,29 @@ class MacSync:
                     moved_here = True
                 elif inside or remembered:
                     actions.append(f"remove\t{mac_track.pid}")
+                    changes.append(
+                        {"kind": "removed", "song": song_name(rel) if rel else "a missing file"}
+                    )
                     continue
                 else:
                     continue  # a missing file flalac never knew about
             if rel in seen:
                 actions.append(f"remove\t{mac_track.pid}")  # a duplicate entry
+                changes.append({"kind": "removed", "song": song_name(track.rel) + " (duplicate)"})
                 continue
             seen.add(rel)
+            song = song_name(track.rel)
             readd = bool(last_sync) and track.art_changed > last_sync
+            if readd:
+                changes.append({"kind": "readded", "song": song})
             if moved_here and not readd:
                 actions.append(f"move\t{mac_track.pid}\t{root}/{rel}")
+                changes.append({"kind": "moved", "song": song})
             # `changed` is when the copy's tags or audio last changed; older rows only have
             # `updated`, which also moves when nothing in the file did
             if not readd and last_sync and (track.changed or track.updated) > last_sync:
                 actions.append(f"refresh\t{mac_track.pid}")
+                changes.append({"kind": "refreshed", "song": song})
             item = jelly.get(nfc(track.rel))
             if remembered and remembered.identity != track.identity:
                 remembered = None
@@ -164,11 +182,17 @@ class MacSync:
                 actions.append(f"plays\t{mac_track.pid}\t{agreed}")
             if item.plays != agreed:
                 jelly_updates.append((mac_track.pid, item.id, item.plays, agreed))
+            if music != agreed or item.plays != agreed:
+                change = {"kind": "plays", "song": song, "music": music, "jellyfin": item.plays}
+                change["plays"] = agreed
+                changes.append(change)
+                plays_changes[mac_track.pid] = change
             if not readd:
                 new_memory[mac_track.pid] = MacMemory(track.identity, agreed, agreed, agreed)
 
         for rel in sorted(set(mirrored) - seen):
             actions.append(f"add\t{root}/{rel}")
+            changes.append({"kind": "added", "song": song_name(mirrored[rel].rel)})
 
         self.db.save_mac_sync(request.mac, new_memory, time.time())
         failed = 0
@@ -178,6 +202,8 @@ class MacSync:
                 self.jellyfin.set_play_count(item_id, new)
             except JellyfinError:
                 failed += 1
+                if pid in plays_changes:
+                    plays_changes[pid]["jellyfin_failed"] = True
                 kept = new_memory.get(pid)
                 if kept is not None:  # a re-added song is paired afresh next time anyway
                     new_memory[pid] = MacMemory(kept.identity, kept.agreed, kept.last_music, old)
@@ -186,6 +212,8 @@ class MacSync:
             info.append(f"{failed} Jellyfin play counts could not be saved; retried next time")
         if jelly_updates:
             info.append(f"{len(jelly_updates) - failed} play counts updated in Jellyfin")
+        self.changes = changes
+        self.jellyfin_updated = len(jelly_updates) - failed
         self.db.event(
             "mac-sync",
             None,

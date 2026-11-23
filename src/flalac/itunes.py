@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import Settings
@@ -22,6 +22,9 @@ from .jellyfin import Jellyfin
 from .macsync import MacSync, MacTrack, Request, nfc
 
 ADD_BATCH = 100
+# How MacSync's notes about Jellyfin saves end
+JELLYFIN_DONE = " play counts updated in Jellyfin"
+JELLYFIN_UNSAVED = " Jellyfin play counts could not be saved; retried next time"
 # A re-added song (new cover) counts as refreshed: to the person it is the same song, updated
 COUNTED = {
     "remove": "removed",
@@ -167,7 +170,9 @@ class LibraryResult:
     refreshed: int = 0
     plays: int = 0
     failed: int = 0
+    jellyfin: int = 0  # play counts saved in Jellyfin
     notes: list[str] | None = None
+    changes: list[dict] = field(default_factory=list)  # song by song, see MacSync.changes
 
     def text(self) -> str:
         line = (
@@ -191,12 +196,25 @@ def sync_library(
     app = app or app_name()
     syncer = MacSync(settings, db, Jellyfin.from_settings(settings))
     result = LibraryResult(notes=[])
+    changes_by_song: dict[tuple[str, str], dict] = {}
+    unsaved = ""  # "N play counts could not be saved": only the last round's is still true
     for _ in range(2):  # songs added in the first round get their play counts in the second
         tracks = read_library(app)
         actions = syncer.sync(Request(library, nfc(str(settings.target)), tracks))
         adds = [a.split("\t", 1)[1] for a in actions if a.startswith("add\t")]
         changes = [a for a in actions if a.split("\t", 1)[0] in COUNTED]
-        result.notes = [a.split("\t", 1)[1] for a in actions if a.startswith("info\t")]
+        # A change round 2 makes again (a failed save retried) replaces round 1's
+        for change in syncer.changes:
+            changes_by_song.pop((change["kind"], change["song"]), None)
+            changes_by_song[(change["kind"], change["song"])] = change
+        result.jellyfin += syncer.jellyfin_updated
+        # Notes of both rounds, once each; the Jellyfin total is said once at the end
+        unsaved = ""
+        for note in (a.split("\t", 1)[1] for a in actions if a.startswith("info\t")):
+            if note.endswith(JELLYFIN_UNSAVED):
+                unsaved = note
+            elif not note.endswith(JELLYFIN_DONE) and note not in result.notes:
+                result.notes.append(note)
         for action in changes:
             field = COUNTED[action.split("\t", 1)[0]]
             setattr(result, field, getattr(result, field) + 1)
@@ -209,4 +227,9 @@ def sync_library(
             progress(f"{min(start + ADD_BATCH, len(adds))} of {len(adds)} added to {app}")
         if not adds:
             break
+    result.changes = list(changes_by_song.values())
+    if unsaved:
+        result.notes.append(unsaved)
+    if result.jellyfin:
+        result.notes.append(f"{result.jellyfin}{JELLYFIN_DONE}")
     return result

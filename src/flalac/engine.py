@@ -10,6 +10,8 @@
 
 The Jellyfin API key comes from the environment (FLALAC_JELLYFIN_KEY), never the command line.
 Messages: stage, progress, held-deletes, summary, jellyfin, version, error (then exit 1).
+A summary lists the songs it changed (`songs`, and `songs` in `library`; at most 500 each,
+the rest counted in `songs_more`); the log has every one.
 stderr is free-form log text.
 """
 
@@ -33,6 +35,20 @@ from .jellyfin import Jellyfin, JellyfinError
 from .once import OnceError, Summary, run
 
 KEY_ENV = "FLALAC_JELLYFIN_KEY"
+# Songs listed in a summary; the log has all of them (a first sync adds thousands)
+LISTED = 500
+LABELS = {
+    "converted": "Converted",
+    "retagged": "Retagged",
+    "renamed": "Renamed",
+    "removed": "Removed",
+    "failed": "Failed",
+    "added": "Added",
+    "moved": "Re-pointed",
+    "refreshed": "Refreshed",
+    "readded": "Re-added (new cover)",
+    "plays": "Play count",
+}
 
 
 def emit(kind: str, **fields: object) -> None:
@@ -107,6 +123,7 @@ def _sync(args: argparse.Namespace) -> int:
         emit("error", message=str(error))
         return 1
     log(summary.text())
+    log_songs(summary.songs)
     if summary.held_deletes:
         emit("held-deletes", count=summary.held_deletes)
     library = None
@@ -131,6 +148,7 @@ def _sync(args: argparse.Namespace) -> int:
         finally:
             db.close()
         log(result.text())
+        log_songs(result.changes, f"{app}: ")
         notes = list(result.notes or [])
         library = {
             "app": app,
@@ -140,12 +158,38 @@ def _sync(args: argparse.Namespace) -> int:
             "refreshed": result.refreshed,
             "plays": result.plays,
             "failed": result.failed,
+            "jellyfin": result.jellyfin,
+            "songs": result.changes[:LISTED],
+            "songs_more": max(0, len(result.changes) - LISTED),
         }
     if args.library != "none" and not settings.jellyfin_api_key:
         notes.append("Play counts: Jellyfin is not set up.")
     emit("stage", stage="done")
     _emit_summary(summary, library, notes)
     return 0
+
+
+def describe(change: dict) -> str:
+    """One change as a log line: "Play count: A/B/01 Song: Music 3 → 5, Jellyfin 4 → 5"."""
+    line = f"{LABELS.get(change['kind'], change['kind'])}: {change['song']}"
+    if change["kind"] == "plays":
+        new = change["plays"]
+        sides = [
+            f"{name} {change[key]} → {new}"
+            for name, key in (("Music", "music"), ("Jellyfin", "jellyfin"))
+            if key in change and change[key] != new
+        ]
+        line += ": " + ", ".join(sides)
+        if change.get("jellyfin_failed"):
+            line += " (Jellyfin not saved; retried next time)"
+    elif change.get("detail"):
+        line += f" ({change['detail']})"
+    return line
+
+
+def log_songs(changes: list[dict], prefix: str = "") -> None:
+    for change in changes:
+        log(prefix + describe(change))
 
 
 def _emit_summary(summary: Summary, library: dict | None, notes: list[str]) -> None:
@@ -161,6 +205,8 @@ def _emit_summary(summary: Summary, library: dict | None, notes: list[str]) -> N
         seconds=round(summary.seconds, 1),
         library=library,
         notes=notes,
+        songs=summary.songs[:LISTED],
+        songs_more=max(0, len(summary.songs) - LISTED),
     )
 
 
