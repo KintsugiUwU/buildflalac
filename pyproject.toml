@@ -1,6 +1,6 @@
 [project]
 name = "flalac"
-version = "0.4.3"
+version = "1.0.0"
 description = "Keep a lossless mirror of a music library in another format (FLAC ⇄ ALAC), with lyrics."
 authors = [
     { name = "Davide Petris", email = "kintsugiuwu@noreply.codeberg.org" }
