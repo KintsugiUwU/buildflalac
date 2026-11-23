@@ -9,6 +9,8 @@ struct MainView: View {
     @ObservedObject var log: LogBuffer
     @ObservedObject var updater: Updater
     @AppStorage("showLog") private var showLog = false
+    @AppStorage(Decorations.enabledKey) private var decorationsOn = true
+    @AppStorage(Decorations.previewKey) private var decorationPreview = Decorations.automatic
     @State private var volumesChanged = 0  // re-checks the folders when drives come and go
     let openSettings: () -> Void
     let chooseFolder: (FolderKind) -> Void
@@ -26,6 +28,8 @@ struct MainView: View {
         }
         .padding(20)
         .frame(width: 480)
+        .background(festiveBackground)
+        .overlay(festiveForeground)
         .fixedSize(horizontal: false, vertical: true)
         .alert(item: $controller.pendingDeletes) { pending in
             deletesAlert(pending)
@@ -38,6 +42,23 @@ struct MainView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             volumesChanged += 1
+        }
+    }
+
+    private var festivity: Festivity? {
+        _ = volumesChanged  // looked at again when the app comes to the front (a new day)
+        return Decorations.current(enabled: decorationsOn, preview: decorationPreview)
+    }
+
+    @ViewBuilder private var festiveBackground: some View {
+        if let festivity {
+            FestiveBackground(festivity: festivity).id(festivity)
+        }
+    }
+
+    @ViewBuilder private var festiveForeground: some View {
+        if let festivity {
+            FestiveForeground(festivity: festivity).id(festivity)
         }
     }
 

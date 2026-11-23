@@ -15,6 +15,7 @@ struct SettingsView: View {
     let addSongsWithoutLyrics: () -> Void
 
     @AppStorage("settingsTab") private var tab = "general"
+    @AppStorage(Decorations.enabledKey) private var decorationsOn = true
     @State private var selectedSong: String?
 
     var body: some View {
@@ -89,6 +90,15 @@ struct SettingsView: View {
             }
             Row("") {
                 Note("Changing this converts every song again.")
+            }
+
+            Gap()
+            Row("Decorations:") {
+                Toggle("Decorate the window on holidays", isOn: $decorationsOn)
+            }
+            Row("") {
+                Note("Christmas, New Year, Easter, Halloween and the first day of each season. "
+                    + "With Reduce motion on, they stand still.")
             }
         }
         .padding(20)

@@ -11,6 +11,8 @@
 #   DEV=1 ./build.sh                    a development build in build/dev/ (bundle id
 #                                       com.davidepetris.flalac.dev, own settings) that
 #                                       dev/ctl.sh can drive; see README.md
+#   PREVIEW=1 ./build.sh                a test build with a Decorations menu (any holiday's
+#                                       decoration, whatever the date)
 # =====================================
 set -euo pipefail
 
@@ -21,6 +23,9 @@ BUNDLE_ID=com.davidepetris.flalac
 OUT=$HERE/build
 SWIFT_FLAGS=()
 SOURCES=("$HERE"/Sources/*.swift)
+if [ "${PREVIEW:-0}" = 1 ]; then
+    SWIFT_FLAGS+=(-D FLALAC_PREVIEW)  # a Decorations menu to show any holiday's decoration
+fi
 if [ "${DEV:-0}" = 1 ]; then
     BUNDLE_ID=$BUNDLE_ID.dev
     OUT=$HERE/build/dev

@@ -213,6 +213,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func sync(_ sender: Any?) {
         controller.sync()
     }
+
+    #if FLALAC_PREVIEW
+    /// Test builds: show a decoration whatever the date (the window follows the setting).
+    @objc func previewDecoration(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.representedObject as? String ?? "", forKey: Decorations.previewKey)
+    }
+    #endif
 }
 
 extension AppDelegate: NSMenuItemValidation {
@@ -220,6 +227,12 @@ extension AppDelegate: NSMenuItemValidation {
         if menuItem.action == #selector(sync(_:)) {
             return settings.foldersChosen && settings.foldersMissing == nil && !controller.isRunning
         }
+        #if FLALAC_PREVIEW
+        if menuItem.action == #selector(previewDecoration(_:)) {
+            let chosen = UserDefaults.standard.string(forKey: Decorations.previewKey) ?? ""
+            menuItem.state = (menuItem.representedObject as? String ?? "") == chosen ? .on : .off
+        }
+        #endif
         return true
     }
 }
@@ -272,6 +285,32 @@ enum MainMenu {
             keyEquivalent: "f"
         )
         find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+
+        #if FLALAC_PREVIEW
+        let decorations = submenu(of: menu, title: "Decorations")
+        let choices: [(String, String)] = [("By date", Decorations.automatic), ("None", Decorations.none)]
+            + Festivity.allCases.map { ($0.title, $0.rawValue) }
+        for (index, (title, value)) in choices.enumerated() {
+            if index == 2 { decorations.addItem(.separator()) }
+            let item = decorations.addItem(
+                withTitle: title,
+                action: #selector(AppDelegate.previewDecoration(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = value
+        }
+        decorations.addItem(.separator())
+        let year = Calendar.current.component(.year, from: Date())
+        let today = Festivity.on(Date()).map { $0.title } ?? "nothing"
+        decorations.addItem(withTitle: "Today by date: \(today)", action: nil, keyEquivalent: "")
+        for festivity in Festivity.allCases {
+            decorations.addItem(
+                withTitle: "\(festivity.title), \(year): \(festivity.dates(in: year))",
+                action: nil,
+                keyEquivalent: ""
+            )
+        }
+        #endif
 
         let window = submenu(of: menu, title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

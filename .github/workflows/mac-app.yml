@@ -4,13 +4,16 @@ name: Mac app
 
 on:
   push:
-    branches: [main]
+    branches: [main, festive]
   workflow_dispatch:
 
 jobs:
   app:
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      # Branches other than main build a test app with the Decorations preview menu
+      PREVIEW: ${{ github.ref_name == 'main' && '0' || '1' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -46,6 +49,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Flalac-app
+          name: ${{ github.ref_name == 'main' && 'Flalac-app' || format('Flalac-app-{0}-preview', github.ref_name) }}
           path: Flalac.zip
           retention-days: 30
