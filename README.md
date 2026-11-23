@@ -100,7 +100,9 @@ and it converts what changed, keeps the iTunes or Music library in step and sync
 with Jellyfin. Settings (⌘,) cover Jellyfin (the API key is kept in the Keychain), lyrics, songs
 that must not get lyrics, and ALAC quality. After a sync, Details lists every song it converted,
 retagged, renamed or removed, the songs added to or changed in the library, and each play count
-with its value before and after, in Music and in Jellyfin. Everything is inside the app: Python, the engine and
+with its value before and after, in Music and in Jellyfin. On holidays and on the first day of each season the window is
+decorated (Settings can turn it off); the Halloween drawings are from
+[Noto Emoji](https://github.com/googlefonts/noto-emoji) by Google, Apache License 2.0. Everything is inside the app: Python, the engine and
 FFmpeg. Build it with `FLALAC_BUILD=engine packaging/build_mac_app.sh` then
 `ENGINE_DIR=packaging/dist/flalac-engine macos/build.sh`; see `macos/README.md`.
 

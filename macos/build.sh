@@ -60,6 +60,8 @@ swiftc \
 
 cp "$CONCURRENCY" "$APP/Contents/Frameworks/"
 cp ../packaging/flalac.icns "$APP/Contents/Resources/flalac.icns"
+# Holiday drawings (Noto Emoji, Apache License 2.0; see Resources/Festive/LICENSE)
+cp "$HERE"/Resources/Festive/*.pdf "$HERE"/Resources/Festive/LICENSE "$APP/Contents/Resources/"
 
 cat >"$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

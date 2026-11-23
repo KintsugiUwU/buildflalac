@@ -213,8 +213,7 @@ struct FestiveForeground: View {
                 Eggs(still: still)
                     .position(x: space.size.width - 58, y: space.size.height - 16)
             case .halloween:
-                Pumpkins()
-                    .position(x: space.size.width - 50, y: space.size.height - 16)
+                HalloweenEdges(size: space.size, still: still)
             default:
                 EmptyView()
             }
@@ -290,13 +289,44 @@ private struct Wire: Shape {
     }
 }
 
+// MARK: - Motion
+
+/// Redraws its content 30 times a second with the seconds since it appeared. Positions are
+/// worked out from that time, so things loop cleanly (a flake that reaches the bottom starts
+/// again at the top) instead of relying on repeating animations. Still with Reduce motion.
+private struct Ticking<Content: View>: View {
+    let still: Bool
+    let content: (Double) -> Content
+    @State private var start = Date()
+    @State private var now = Date()
+    private let timer = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
+
+    init(still: Bool, @ViewBuilder content: @escaping (Double) -> Content) {
+        self.still = still
+        self.content = content
+    }
+
+    var body: some View {
+        content(still ? 0 : now.timeIntervalSince(start))
+            .onReceive(timer) { date in
+                if !still { now = date }
+            }
+    }
+}
+
+/// The fraction of a loop of `duration` seconds reached at `time`, starting at `phase`.
+private func loop(_ time: Double, every duration: Double, phase: Double = 0) -> Double {
+    let value = (time / duration + phase).truncatingRemainder(dividingBy: 1)
+    return value < 0 ? value + 1 : value
+}
+
 // MARK: - Falling things
 
 private enum FallingKind {
     case snow, confetti, petal, leaf
 }
 
-/// Flakes, confetti, petals or leaves drifting down behind the content.
+/// Flakes, confetti, petals or leaves drifting down behind the content, top to bottom.
 private struct Falling: View {
     let kind: FallingKind
     let count: Int
@@ -305,9 +335,13 @@ private struct Falling: View {
     @State private var seeds: [FallSeed] = []
 
     var body: some View {
-        ZStack {
-            ForEach(seeds) { seed in
-                Faller(kind: kind, seed: seed, size: size, still: still)
+        Ticking(still: still) { time in
+            ZStack {
+                ForEach(seeds) { seed in
+                    FallingPiece(kind: kind, seed: seed)
+                        .rotationEffect(.degrees(still ? seed.spin / 4 : time * seed.spin / seed.duration))
+                        .position(position(of: seed, at: time))
+                }
             }
         }
         .onAppear {
@@ -316,46 +350,33 @@ private struct Falling: View {
             }
         }
     }
+
+    private func position(of seed: FallSeed, at time: Double) -> CGPoint {
+        let height = Double(size.height) + 40
+        let fall = still ? seed.phase : loop(time, every: seed.duration, phase: seed.phase)
+        let sway = still ? 0 : sin(time * 2 * .pi / seed.swayPeriod + seed.phase * 6) * Double(seed.sway)
+        return CGPoint(x: seed.x * size.width + CGFloat(sway), y: CGFloat(fall * height - 20))
+    }
 }
 
 private struct FallSeed: Identifiable {
     let id: Int
     let x = CGFloat.random(in: 0...1)
     let scale = CGFloat.random(in: 0.6...1.2)
-    let duration = Double.random(in: 7...14)
-    let delay = Double.random(in: 0...8)
-    let sway = CGFloat.random(in: 10...28)
-    let spin = Double.random(in: 120...420) * (Bool.random() ? 1 : -1)
+    let duration = Double.random(in: 8...15)  // seconds from the top to the bottom
+    let phase = Double.random(in: 0..<1)  // where in its fall it starts: the window is full at once
+    let sway = CGFloat.random(in: 8...22)
+    let swayPeriod = Double.random(in: 3...6)
+    let spin = Double.random(in: 90...360) * (Bool.random() ? 1 : -1)  // degrees per fall
     let hue = Int.random(in: 0..<5)
-    let rest = CGFloat.random(in: 0.05...0.95)  // where it hangs with Reduce motion on
 }
 
-private struct Faller: View {
+private struct FallingPiece: View {
     let kind: FallingKind
     let seed: FallSeed
-    let size: CGSize
-    let still: Bool
-    @State private var down = false
-    @State private var swayed = false
 
     var body: some View {
-        piece
-            .scaleEffect(seed.scale)
-            .rotationEffect(.degrees(down && !still ? seed.spin : 0))
-            .offset(x: swayed ? seed.sway : -seed.sway)
-            .position(
-                x: seed.x * size.width,
-                y: still ? seed.rest * size.height : (down ? size.height + 20 : -20)
-            )
-            .onAppear {
-                guard !still else { return }
-                withAnimation(.linear(duration: seed.duration).delay(seed.delay).repeatForever(autoreverses: false)) {
-                    down = true
-                }
-                withAnimation(.easeInOut(duration: seed.duration / 4).repeatForever(autoreverses: true)) {
-                    swayed = true
-                }
-            }
+        piece.scaleEffect(seed.scale)
     }
 
     @ViewBuilder private var piece: some View {
@@ -461,82 +482,86 @@ private struct Eggs: View {
 
 // MARK: - Halloween
 
-private struct Pumpkins: View {
+/// Drawings from Noto Emoji (Google, Apache License 2.0), kept as PDFs in the app's
+/// Resources/Festive folder; see Resources/Festive/LICENSE.
+@MainActor
+private enum Artwork {
+    private static var loaded: [String: NSImage] = [:]
+
+    static func image(_ name: String) -> NSImage? {
+        if let image = loaded[name] { return image }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "pdf"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        loaded[name] = image
+        return image
+    }
+}
+
+private struct Drawing: View {
+    let name: String
+
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Pumpkin().frame(width: 30, height: 24)
-            Pumpkin().frame(width: 22, height: 18)
+        if let image = Artwork.image(name) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
         }
     }
 }
 
-private struct Pumpkin: View {
+/// Pumpkins in the corner, a ghost floating, a spider on its thread.
+private struct HalloweenEdges: View {
+    let size: CGSize
+    let still: Bool
+
     var body: some View {
-        ZStack {
-            HStack(spacing: -8) {
-                Ellipse().fill(Color(red: 0.95, green: 0.5, blue: 0.1))
-                Ellipse().fill(Color(red: 1.0, green: 0.58, blue: 0.15))
-                Ellipse().fill(Color(red: 0.95, green: 0.5, blue: 0.1))
+        Ticking(still: still) { time in
+            ZStack {
+                HStack(alignment: .bottom, spacing: 2) {
+                    Drawing(name: "pumpkin").frame(width: 34, height: 34)
+                    Drawing(name: "pumpkin").frame(width: 24, height: 24)
+                }
+                .position(x: size.width - 40, y: size.height - 20)
+                Drawing(name: "ghost")
+                    .frame(width: 30, height: 30)
+                    .opacity(0.9)
+                    .position(x: 30, y: size.height - 26 + CGFloat(sin(time * 1.3) * 5))
+                let thread = 26 + CGFloat((1 - cos(time * 0.6)) * 14)
+                Path { path in
+                    path.move(to: CGPoint(x: size.width - 70, y: 0))
+                    path.addLine(to: CGPoint(x: size.width - 70, y: thread))
+                }
+                .stroke(Color.secondary.opacity(0.6), lineWidth: 0.7)
+                Drawing(name: "spider")
+                    .frame(width: 20, height: 20)
+                    .position(x: size.width - 70, y: thread + 8)
             }
-            Capsule()
-                .fill(Color(red: 0.3, green: 0.45, blue: 0.15))
-                .frame(width: 3, height: 7)
-                .offset(y: -13)
         }
     }
 }
 
-/// A few bats crossing the window now and then.
+/// Bats crossing the window behind the content, left to right, flapping.
 private struct Bats: View {
     let size: CGSize
     let still: Bool
 
     var body: some View {
-        ZStack {
-            ForEach(0..<4, id: \.self) { index in
-                FlyingBat(index: index, size: size, still: still)
+        Ticking(still: still) { time in
+            ZStack {
+                ForEach(0..<3, id: \.self) { index in
+                    let duration = 10 + Double(index) * 3
+                    let across = still ? 0.25 + 0.25 * Double(index) : loop(time, every: duration, phase: Double(index) * 0.37)
+                    let flap = still ? 1 : 0.55 + 0.45 * abs(sin(time * 7 + Double(index)))
+                    Drawing(name: "bat")
+                        .frame(width: 26, height: 26)
+                        .scaleEffect(x: 1, y: CGFloat(flap))
+                        .opacity(0.8)
+                        .position(
+                            x: CGFloat(across) * (size.width + 60) - 30,
+                            y: size.height * (0.2 + 0.25 * CGFloat(index)) + CGFloat(sin(time * 1.5 + Double(index)) * 6)
+                        )
+                }
             }
         }
-    }
-}
-
-private struct FlyingBat: View {
-    let index: Int
-    let size: CGSize
-    let still: Bool
-    @State private var across = false
-    @State private var flap = false
-
-    var body: some View {
-        let height = size.height * (0.15 + 0.2 * CGFloat(index))
-        Bat()
-            .fill(Color.primary.opacity(0.45))
-            .frame(width: 22, height: 10)
-            .scaleEffect(x: 1, y: flap ? 0.4 : 1)
-            .position(
-                x: still ? size.width * (0.2 + 0.2 * CGFloat(index)) : (across ? size.width + 30 : -30),
-                y: height
-            )
-            .onAppear {
-                guard !still else { return }
-                withAnimation(.linear(duration: 9 + Double(index) * 2).delay(Double(index) * 3)
-                    .repeatForever(autoreverses: false)) { across = true }
-                withAnimation(.easeInOut(duration: 0.18).repeatForever(autoreverses: true)) { flap = true }
-            }
-    }
-}
-
-private struct Bat: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let mid = rect.midX
-        path.move(to: CGPoint(x: mid, y: rect.midY + 2))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: mid - rect.width * 0.25, y: rect.minY - 2))
-        path.addQuadCurve(to: CGPoint(x: mid - 2, y: rect.maxY), control: CGPoint(x: rect.minX + 4, y: rect.maxY))
-        path.addLine(to: CGPoint(x: mid + 2, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY), control: CGPoint(x: rect.maxX - 4, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: mid, y: rect.midY + 2), control: CGPoint(x: mid + rect.width * 0.25, y: rect.minY - 2))
-        path.closeSubpath()
-        return path
     }
 }
